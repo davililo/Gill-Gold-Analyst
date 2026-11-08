@@ -41,6 +41,16 @@ main { width: min(100% - 40px, 880px); margin: 0 auto; padding: 68px 0 36px; }
 h1 { margin: 0; font-size: clamp(29px, 6vw, 46px); line-height: 1.08; letter-spacing: 0; }
 h1 span { color: var(--green); }
 .subhead { max-width: 510px; margin: 14px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.strategy-card { margin-bottom: 14px; padding: 16px; border: 1px solid var(--border); background: #151c18f5; }
+.strategy-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.strategy-heading .eyebrow { margin-bottom: 5px; }
+.strategy-heading h2 { font-size: 16px; }
+.strategy-tag { padding: 5px 7px; border: 1px solid #536a45; color: var(--green); font: 8px var(--mono); white-space: nowrap; }
+.strategy-rules { display: grid; grid-template-columns: 1fr 1fr; gap: 0 15px; margin-top: 12px; }
+.strategy-rules p { margin: 0; padding: 9px 0; border-top: 1px solid var(--border); color: var(--soft); font-size: 10px; line-height: 1.55; }
+.strategy-rules b { color: var(--green); font: 9px var(--mono); }
+.strategy-sources { margin: 10px 0 0; color: var(--muted); font-size: 9px; line-height: 1.55; }
+.strategy-sources a { color: var(--soft); text-decoration-color: #687969; text-underline-offset: 2px; }
 .upload-panel, .analysis-result { border: 1px solid var(--border); background: #151c18f5; }
 .upload-panel { padding: 16px; }
 #chart-file { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
@@ -80,6 +90,8 @@ footer { display: flex; justify-content: space-between; gap: 12px; margin-top: 1
   main { width: calc(100% - 26px); padding-top: 42px; }
   .intro { margin-bottom: 22px; }
   .upload-panel { padding: 10px; }
+  .strategy-card { padding: 13px; }
+  .strategy-rules { grid-template-columns: 1fr; }
   .upload-dropzone { min-height: 160px; padding: 14px; }
   .analysis-result { padding: 14px; }
   .levels-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
