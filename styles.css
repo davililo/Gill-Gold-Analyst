@@ -27,14 +27,8 @@ button { color: inherit; }
 .brand-copy { display: grid; gap: 3px; }
 .brand-copy strong { font-size: 11px; letter-spacing: 1px; }
 .brand-copy small { color: var(--muted); font: 9px var(--mono); letter-spacing: .5px; }
-.ai-connection { position: relative; z-index: 2; }
-.ai-connection summary { padding: 8px 10px; border: 1px solid var(--border); color: var(--soft); font-size: 10px; cursor: pointer; }
-.connection-fields { position: absolute; top: 38px; right: 0; width: min(340px, calc(100vw - 32px)); display: grid; gap: 8px; padding: 13px; border: 1px solid var(--border); background: var(--panel); box-shadow: 0 12px 30px #0008; }
-.connection-fields label { color: var(--soft); font-size: 10px; }
-.api-key-row { display: flex; gap: 7px; }
-.api-key-row input { width: 0; min-width: 0; flex: 1; padding: 0 9px; border: 1px solid var(--border); background: #101513; color: var(--text); font: 11px var(--mono); }
-.api-key-row button { min-height: 34px; padding: 0 10px; border: 1px solid #657d4d; background: #263423; color: var(--green); font-size: 10px; cursor: pointer; }
-.connection-fields small { color: var(--muted); font-size: 9px; line-height: 1.5; }
+.local-badge { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font: 9px var(--mono); letter-spacing: .5px; }
+.local-badge i { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
 main { width: min(100% - 40px, 880px); margin: 0 auto; padding: 68px 0 36px; }
 .intro { max-width: 650px; margin-bottom: 28px; }
 .eyebrow { margin: 0 0 10px; color: var(--green); font: 10px var(--mono); letter-spacing: .8px; }
@@ -51,6 +45,8 @@ h1 span { color: var(--green); }
 .strategy-rules b { color: var(--green); font: 9px var(--mono); }
 .strategy-sources { margin: 10px 0 0; color: var(--muted); font-size: 9px; line-height: 1.55; }
 .strategy-sources a { color: var(--soft); text-decoration-color: #687969; text-underline-offset: 2px; }
+.skill-sources { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; }
+.skill-sources a { color: var(--soft); font-size: 9px; text-decoration-color: #687969; text-underline-offset: 2px; }
 .upload-panel, .analysis-result { border: 1px solid var(--border); background: #151c18f5; }
 .upload-panel { padding: 16px; }
 #chart-file { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
@@ -76,6 +72,7 @@ h2 { margin: 0; font-size: 17px; }
 .result-direction { margin: 17px 0 8px; color: var(--gold); font: 500 23px var(--mono); }
 .result-direction.long { color: var(--green); }
 .result-direction.short { color: var(--red); }
+.result-direction.wait { color: var(--gold); }
 .result-summary { margin: 0; color: var(--soft); font-size: 11px; line-height: 1.6; }
 .levels-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; margin: 16px 0 0; }
 .levels-grid > div { min-width: 0; padding: 10px; border: 1px solid var(--border); background: #111713; }

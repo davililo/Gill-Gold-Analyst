@@ -15,35 +15,21 @@
           <span class="brand-mark">G<span>+</span></span>
           <span class="brand-copy"><strong>GILL</strong><small>MT5 CHART READER</small></span>
         </a>
-        <details class="ai-connection">
-          <summary id="connection-label">Connect AI</summary>
-          <div class="connection-fields">
-            <label for="gemini-api-key">Google AI Studio API key</label>
-            <div class="api-key-row">
-              <input id="gemini-api-key" type="password" autocomplete="off" placeholder="Paste API key" />
-              <button id="save-gemini-key" type="button">Connect</button>
-            </div>
-            <small id="connection-note">Saved in this tab only. The selected image is sent to Google Gemini for analysis.</small>
-          </div>
-        </details>
+        <span class="local-badge"><i></i> LOCAL RULEBOOK</span>
       </header>
 
       <main id="home">
         <section class="intro">
           <p class="eyebrow">XAU / USD · METATRADER 5</p>
           <h1>One setup.<br /><span>Clear rules.</span></h1>
-          <p class="subhead">Upload an MT5 screenshot or take a photo. The chart is read using the active strategy below.</p>
+          <p class="subhead">Upload an MT5 screenshot or take a photo. The saved strategy rules and image scan run on this device.</p>
         </section>
 
         <section class="strategy-card" aria-labelledby="strategy-title">
-          <div class="strategy-heading"><div><p class="eyebrow">STRATEGY 01 · ACTIVE</p><h2 id="strategy-title">Gold EMA Pullback</h2></div><span class="strategy-tag">TREND CONTINUATION</span></div>
-          <div class="strategy-rules">
-            <p><b>LONG</b> EMA 20 above EMA 50; price pulls back to EMA 20; bullish candle confirms. Entry above its high.</p>
-            <p><b>SHORT</b> EMA 20 below EMA 50; price pulls back to EMA 20; bearish candle confirms. Entry below its low.</p>
-            <p><b>STOP</b> Beyond the pullback swing. Skip if required risk exceeds 1.5 × ATR(14).</p>
-            <p><b>TARGET</b> Next visible swing level, only if it offers at least 2R. Otherwise WAIT.</p>
-          </div>
-          <p class="strategy-sources">Indicator references: <a href="https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-overlays/moving-averages-simple-and-exponential" target="_blank" rel="noreferrer">Moving averages define trend but lag</a> · <a href="https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-indicators/average-true-range-atr" target="_blank" rel="noreferrer">ATR measures volatility, not direction</a>. This specific combination is a starting rule, not a proven profitable system.</p>
+          <div class="strategy-heading"><div><p class="eyebrow">ACTIVE SAVED STRATEGY</p><h2 id="strategy-title">Gold EMA Pullback</h2></div><span id="skill-status" class="strategy-tag">LOADING RULES</span></div>
+          <div id="skill-rules" class="strategy-rules"><p>Loading saved rule file…</p></div>
+          <p id="skill-description" class="strategy-sources">Loading local strategy notes…</p>
+          <div id="skill-sources" class="skill-sources"></div>
         </section>
 
         <section id="upload-panel" class="upload-panel" aria-labelledby="upload-title">
@@ -51,7 +37,7 @@
           <label id="upload-dropzone" class="upload-dropzone" for="chart-file">
             <span class="upload-icon" aria-hidden="true">↑</span>
             <strong id="upload-title">Choose chart image or take photo</strong>
-            <span id="upload-hint">Tap to browse your screenshots or open the camera.</span>
+            <span id="upload-hint">Image analysis runs locally using the saved rulebook. No AI service or API key.</span>
             <span class="button-label">Choose image</span>
           </label>
           <div id="selected-image" class="selected-image" hidden>
@@ -76,10 +62,10 @@
             <div><dt>Take-profit</dt><dd id="result-target">Not clear</dd></div>
           </dl>
           <p id="result-caveats" class="result-caveats"></p>
-          <p class="risk-note">AI-extracted chart values can be wrong. Verify prices and risk with your broker before trading.</p>
+          <p class="risk-note">This local reader estimates candle shapes from screenshot pixels. It does not OCR exact prices. Verify the setup and calculate prices in MT5 before trading.</p>
         </section>
 
-        <footer><span>YOUR IMAGE IS ANALYZED BY GOOGLE GEMINI</span><span>NO TRADE IS PLACED</span></footer>
+        <footer><span>IMAGE + RULEBOOK STAY ON THIS DEVICE</span><span>NO API · NO TRADE IS PLACED</span></footer>
       </main>
     </div>
   </body>

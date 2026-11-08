@@ -1,138 +1,219 @@
-const API_KEY_STORAGE = "gill-gemini-key-session";
-const MODEL_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 const $ = (selector) => document.querySelector(selector);
+const SKILL_URL = new URL("./skills/gold-ema-pullback.json", document.baseURI);
 let currentImage = null;
 let previewUrl = null;
+let strategySkill = null;
 
-function getApiKey() {
-  return sessionStorage.getItem(API_KEY_STORAGE) || "";
+async function loadStrategySkill() {
+  const response = await fetch(SKILL_URL);
+  if (!response.ok) throw new Error("Could not load the saved strategy file.");
+  strategySkill = await response.json();
+  $("#strategy-title").textContent = strategySkill.name;
+  $("#skill-status").textContent = "RULES LOADED";
+  const rules = [
+    ["LONG", `${strategySkill.trend_filter.long}; ${strategySkill.long_setup.pullback} ${strategySkill.long_setup.confirmation} Entry ${strategySkill.long_setup.entry}`],
+    ["SHORT", `${strategySkill.trend_filter.short}; ${strategySkill.short_setup.pullback} ${strategySkill.short_setup.confirmation} Entry ${strategySkill.short_setup.entry}`],
+    ["STOP", `${strategySkill.long_setup.stop_loss} The short-side rule is inverse.`],
+    ["TARGET", strategySkill.long_setup.take_profit],
+  ];
+  $("#skill-rules").innerHTML = rules.map(([label, text]) => `<p><b>${label}</b> ${escapeHtml(text)}</p>`).join("");
+  const sources = strategySkill.references.map((source) => `<a href="${escapeHtml(source.url)}" target="_blank" rel="noreferrer">${escapeHtml(source.title)}</a>`).join(" · ");
+  $("#skill-description").textContent = `${strategySkill.description} ${strategySkill.performance_note}`;
+  $("#skill-description").insertAdjacentHTML("beforeend", ` Sources: ${sources}`);
 }
 
-function setConnectionState(connected, message) {
-  $("#connection-label").textContent = connected ? "AI connected" : "Connect AI";
-  $("#connection-note").textContent = message;
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 }
 
-function saveApiKey() {
-  const key = $("#gemini-api-key").value.trim();
-  if (!key) {
-    sessionStorage.removeItem(API_KEY_STORAGE);
-    setConnectionState(false, "Key cleared. It is never saved in the website files.");
-    return;
+function setStatus(message) {
+  $("#analysis-status").textContent = message;
+}
+
+function previewImage(file) {
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewUrl = URL.createObjectURL(file);
+  $("#selected-image").hidden = false;
+  $("#image-name").textContent = file.name || "Chart image";
+  $("#image-size").textContent = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+  const preview = $("#image-preview");
+  preview.hidden = false;
+  preview.src = previewUrl;
+  preview.onerror = () => { preview.hidden = true; };
+}
+
+function findColoredCandles(imageData, width, height) {
+  const columns = Array.from({ length: width }, () => ({ minY: height, maxY: -1, green: 0, red: 0 }));
+  const pixels = imageData.data;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const red = pixels[offset];
+      const green = pixels[offset + 1];
+      const blue = pixels[offset + 2];
+      if (green > 75 && green - red > 24 && green > red * 1.22 && green > blue * 0.8) {
+        columns[x].minY = Math.min(columns[x].minY, y);
+        columns[x].maxY = Math.max(columns[x].maxY, y);
+        columns[x].green += 1;
+      } else if (red > 85 && red - green > 24 && red > green * 1.22 && red > blue * 1.05) {
+        columns[x].minY = Math.min(columns[x].minY, y);
+        columns[x].maxY = Math.max(columns[x].maxY, y);
+        columns[x].red += 1;
+      }
+    }
   }
-  sessionStorage.setItem(API_KEY_STORAGE, key);
-  $("#gemini-api-key").value = "";
-  setConnectionState(true, "Key is kept in this tab only. The selected image is sent directly to Google Gemini.");
-}
-
-function bytesToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
-  }
-  return btoa(binary);
-}
-
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1]);
-    reader.onerror = () => reject(new Error("The browser could not prepare this image."));
-    reader.readAsDataURL(blob);
+  const candles = [];
+  let cluster = null;
+  const finish = () => {
+    if (!cluster) return;
+    const span = cluster.last - cluster.first + 1;
+    const pixelHeight = cluster.maxY - cluster.minY;
+    const total = cluster.green + cluster.red;
+    if (span <= Math.max(18, width * 0.018) && pixelHeight >= 4 && total >= span * 2) {
+      const bullish = cluster.green > cluster.red;
+      candles.push({
+        high: height - cluster.minY,
+        low: height - cluster.maxY,
+        open: bullish ? height - cluster.maxY : height - cluster.minY,
+        close: bullish ? height - cluster.minY : height - cluster.maxY,
+        bullish,
+      });
+    }
+    cluster = null;
+  };
+  columns.forEach((column, x) => {
+    if (!column.green && !column.red) {
+      if (cluster && x - cluster.last > 2) finish();
+      return;
+    }
+    if (cluster && x - cluster.last > 2) finish();
+    if (!cluster) cluster = { first: x, last: x, minY: height, maxY: 0, green: 0, red: 0 };
+    cluster.last = x;
+    cluster.minY = Math.min(cluster.minY, column.minY);
+    cluster.maxY = Math.max(cluster.maxY, column.maxY);
+    cluster.green += column.green;
+    cluster.red += column.red;
   });
+  finish();
+  return candles.slice(-180);
 }
 
-function imageAsJpeg(file) {
+function emaSeries(values, period) {
+  const multiplier = 2 / (period + 1);
+  return values.reduce((result, value, index) => {
+    result.push(index === 0 ? value : value * multiplier + result[index - 1] * (1 - multiplier));
+    return result;
+  }, []);
+}
+
+function averageTrueRange(candles, period = 14) {
+  const recent = candles.slice(-period);
+  const ranges = recent.map((candle, index) => {
+    const previous = recent[index - 1] || candles[candles.length - period + index - 1];
+    return previous ? Math.max(candle.high - candle.low, Math.abs(candle.high - previous.close), Math.abs(candle.low - previous.close)) : candle.high - candle.low;
+  });
+  return ranges.reduce((sum, range) => sum + range, 0) / Math.max(ranges.length, 1);
+}
+
+function analyzeCandles(candles, skill) {
+  if (candles.length < skill.image_reader.minimum_candles) {
+    return {
+      direction: "WAIT",
+      confidence: "LOW · LOCAL IMAGE READ",
+      visualSummary: `Only ${candles.length} colored candle groups were detected; ${skill.image_reader.minimum_candles} are needed for the EMA20/50 filter. Try a clearer MT5 chart image.`,
+      currentPrice: null,
+      entry: "Not readable from image",
+      stopLoss: "Not readable from image",
+      takeProfit: "Not readable from image",
+      caveats: ["No OCR is used; exact quoted prices are not extracted."],
+    };
+  }
+  const closes = candles.map((candle) => candle.close);
+  const fast = emaSeries(closes, skill.trend_filter.fast_ema_period);
+  const slow = emaSeries(closes, skill.trend_filter.slow_ema_period);
+  const atr = averageTrueRange(candles, 14);
+  const latest = candles.at(-1);
+  const previous = candles.at(-2);
+  const recentPullbacks = candles.slice(-7, -1).map((candle, offset) => ({ candle, index: candles.length - 7 + offset }));
+  const longPullback = recentPullbacks.some(({ candle, index }) => Math.abs(candle.low - fast[index]) <= atr * 0.75);
+  const shortPullback = recentPullbacks.some(({ candle, index }) => Math.abs(candle.high - fast[index]) <= atr * 0.75);
+  const longTrend = fast.at(-1) > slow.at(-1);
+  const shortTrend = fast.at(-1) < slow.at(-1);
+  const longConfirmation = latest.bullish && latest.close > previous.high;
+  const shortConfirmation = !latest.bullish && latest.close < previous.low;
+  const longSwing = Math.min(...candles.slice(-7, -1).map((candle) => candle.low));
+  const shortSwing = Math.max(...candles.slice(-7, -1).map((candle) => candle.high));
+  const longEntry = latest.high;
+  const shortEntry = latest.low;
+  const longRisk = longEntry - longSwing;
+  const shortRisk = shortSwing - shortEntry;
+  const longStopOkay = longRisk > 0 && longRisk <= atr * 1.5;
+  const shortStopOkay = shortRisk > 0 && shortRisk <= atr * 1.5;
+  let direction = "WAIT";
+  let entry = "No valid entry";
+  let stopLoss = "No valid stop";
+  let takeProfit = "No valid target";
+  if (longTrend && longPullback && longConfirmation && longStopOkay) {
+    direction = "LONG CANDIDATE";
+    entry = "Break above confirmation candle high";
+    stopLoss = "Below recent pullback swing";
+    takeProfit = "2R above entry";
+  } else if (shortTrend && shortPullback && shortConfirmation && shortStopOkay) {
+    direction = "SHORT CANDIDATE";
+    entry = "Break below confirmation candle low";
+    stopLoss = "Above recent pullback swing";
+    takeProfit = "2R below entry";
+  }
+  const visualTrend = longTrend ? "EMA20 is above EMA50 in the detected candle sequence." : shortTrend ? "EMA20 is below EMA50 in the detected candle sequence." : "The EMA20/EMA50 relationship is mixed.";
+  const checks = direction === "WAIT"
+    ? `Trend filter: ${longTrend || shortTrend ? "pass" : "fail"}; pullback: ${longPullback || shortPullback ? "detected" : "not detected"}; candle confirmation: ${longConfirmation || shortConfirmation ? "detected" : "not detected"}; stop/target filter: not fully met.`
+    : "Trend, pullback, confirmation candle, 1.5 ATR stop limit, and 2R visible-range checks passed.";
+  return {
+    direction,
+    confidence: "LOW · LOCAL IMAGE READ",
+    visualSummary: `${visualTrend} Detected ${candles.length} colored candle groups. ${checks}`,
+    currentPrice: null,
+    entry,
+    stopLoss,
+    takeProfit,
+    caveats: ["This rule-based image scan estimates candle colors and positions. It does not OCR prices or reliably distinguish every MT5 theme."],
+  };
+}
+
+function showResult(result) {
+  $("#result-direction").textContent = result.direction;
+  $("#result-direction").className = `result-direction ${result.direction.startsWith("LONG") ? "long" : result.direction.startsWith("SHORT") ? "short" : "wait"}`;
+  $("#result-confidence").textContent = result.confidence;
+  $("#result-summary").textContent = result.visualSummary;
+  $("#result-price").textContent = "Not OCR'd locally";
+  $("#result-entry").textContent = result.entry;
+  $("#result-stop").textContent = result.stopLoss;
+  $("#result-target").textContent = result.takeProfit;
+  $("#result-caveats").textContent = result.caveats.join(" ");
+  $("#analysis-result").hidden = false;
+}
+
+function decodeImage(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const image = new Image();
-    image.onload = async () => {
-      URL.revokeObjectURL(url);
-      try {
-        let maxSide = 2560;
-        let blob = null;
-        while (maxSide >= 960) {
-          const scale = Math.min(1, maxSide / image.width, maxSide / image.height);
-          const canvas = document.createElement("canvas");
-          canvas.width = Math.max(1, Math.round(image.width * scale));
-          canvas.height = Math.max(1, Math.round(image.height * scale));
-          canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
-          blob = await new Promise((done) => canvas.toBlob(done, "image/jpeg", 0.88));
-          if (blob && blob.size <= 18 * 1024 * 1024) break;
-          maxSide = Math.floor(maxSide * 0.72);
-        }
-        if (!blob) throw new Error("Image conversion failed.");
-        resolve({ mime_type: "image/jpeg", data: await blobToBase64(blob) });
-      } catch (error) {
-        reject(error);
-      }
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("This browser cannot convert the image; sending the original format to Gemini instead."));
-    };
+    image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("This browser could not decode the selected image.")); };
     image.src = url;
   });
 }
 
-async function prepareImage(file) {
-  try {
-    return await imageAsJpeg(file);
-  } catch {
-    return { mime_type: file.type || "application/octet-stream", data: bytesToBase64(await file.arrayBuffer()) };
-  }
+function drawImageToCanvas(image) {
+  const scale = Math.min(1, 1800 / image.width, 1400 / image.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return { canvas, context };
 }
 
-async function askGemini(file) {
-  const key = getApiKey();
-  if (!key) throw new Error("Connect your Google AI Studio key, then tap Try again.");
-  const image = await prepareImage(file);
-  const response = await fetch(`${MODEL_ENDPOINT}?key=${encodeURIComponent(key)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [
-        { text: "Read this complete MetaTrader 5 XAU/USD screenshot. Find the main price chart yourself; do not require a crop. Apply only this strategy, named Gold EMA Pullback: LONG only when EMA 20 is visibly above EMA 50, price pulls back to/near EMA 20, and a bullish confirmation candle appears; entry is above that candle's high. SHORT is the exact inverse, with entry below the bearish confirmation candle's low. Stop goes beyond the pullback swing; reject the setup if that risk exceeds 1.5 times ATR(14). Target the next visible swing level only if reward is at least 2 times risk. If the required EMA/ATR overlays or candle levels are not visible or readable, return WAIT and null for unreadable prices; do not assume hidden indicators or invent values. Return JSON only with: strategyName, direction (LONG, SHORT, WAIT, or UNCLEAR), confidence (LOW, MEDIUM, or HIGH), timeframe, visualSummary, currentPrice, entry, stopLoss, takeProfit, riskReward, levelsBasis, ruleChecks (emaTrend, pullback, candleConfirmation, stopWithinAtr, targetAtLeast2R), caveats. Price fields must be numbers or null. Explain any failed rule check. Lower confidence when prices are estimated from chart pixels rather than marked. This is a rule-based interpretation, not a guarantee." },
-        { inline_data: image },
-      ] }],
-      generationConfig: { responseMimeType: "application/json" },
-    }),
-  });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error?.message || `Gemini could not analyze this image (${response.status}).`);
-  const text = body.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("").trim();
-  if (!text) throw new Error("Gemini returned no chart reading. Try selecting the image again.");
-  try {
-    return JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ""));
-  } catch {
-    throw new Error("Gemini returned an unreadable chart report. Please retry.");
-  }
-}
-
-function displayPrice(value) {
-  if (value === null || value === undefined || value === "") return "Not clear";
-  const price = Number(value);
-  return Number.isFinite(price) ? price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Not clear";
-}
-
-function showResult(result) {
-  const direction = String(result.direction || "UNCLEAR").toUpperCase();
-  $("#result-direction").textContent = direction;
-  $("#result-direction").className = `result-direction ${direction.toLowerCase()}`;
-  $("#result-confidence").textContent = `${String(result.confidence || "LOW").toUpperCase()} CONFIDENCE`;
-  $("#result-summary").textContent = `${result.timeframe ? `${result.timeframe} · ` : ""}${result.visualSummary || "No clear chart details detected."}`;
-  $("#result-price").textContent = displayPrice(result.currentPrice);
-  $("#result-entry").textContent = displayPrice(result.entry);
-  $("#result-stop").textContent = displayPrice(result.stopLoss);
-  $("#result-target").textContent = displayPrice(result.takeProfit);
-  const caveats = Array.isArray(result.caveats) ? result.caveats.join(" ") : String(result.caveats || "");
-  const basis = result.levelsBasis ? `Level basis: ${result.levelsBasis}. ` : "";
-  $("#result-caveats").textContent = `${basis}${caveats}`;
-  $("#analysis-result").hidden = false;
-}
-
-function showImagePreview(file) {
+function displayImage(file) {
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = URL.createObjectURL(file);
   $("#selected-image").hidden = false;
@@ -146,19 +227,22 @@ function showImagePreview(file) {
 
 async function analyzeImage(file) {
   currentImage = file;
-  showImagePreview(file);
+  displayImage(file);
   $("#analysis-result").hidden = true;
   $("#retry-analysis").hidden = true;
-  $("#analysis-status").textContent = "Reading chart image…";
   $("#upload-dropzone").classList.add("busy");
+  $("#analysis-status").textContent = "Loading local strategy file and reading image pixels…";
   try {
-    const result = await askGemini(file);
-    showResult(result);
-    $("#analysis-status").textContent = "Chart reading ready. Verify every level before trading.";
+    if (!strategySkill) throw new Error("The local strategy file did not load. Check the skills folder.");
+    const image = await decodeImage(file);
+    const { canvas, context } = drawImageToCanvas(image);
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const candles = findColoredCandles(imageData, canvas.width, canvas.height);
+    showResult(analyzeCandles(candles, strategySkill));
+    $("#analysis-status").textContent = "Local strategy interpretation complete. No image or API request was sent.";
   } catch (error) {
-    $("#analysis-status").textContent = error.message || "Could not read this image. Check your AI connection and retry.";
+    $("#analysis-status").textContent = error.message || "Could not analyze this image locally.";
     $("#retry-analysis").hidden = false;
-    if (!getApiKey()) $(".ai-connection").open = true;
   } finally {
     $("#upload-dropzone").classList.remove("busy");
   }
@@ -166,11 +250,35 @@ async function analyzeImage(file) {
 
 function handleFiles(files) {
   const file = files?.[0];
-  if (!file) return;
-  analyzeImage(file);
+  if (file) analyzeImage(file);
 }
 
-$("#save-gemini-key").addEventListener("click", saveApiKey);
+function start() {
+  fetch(SKILL_URL)
+    .then((response) => {
+      if (!response.ok) throw new Error("Could not load local strategy rules.");
+      return response.json();
+    })
+    .then((skill) => {
+      strategySkill = skill;
+      const rules = [
+        ["LONG", `${skill.trend_filter.long}; ${skill.long_setup.pullback} ${skill.long_setup.confirmation} Entry ${skill.long_setup.entry}`],
+        ["SHORT", `${skill.trend_filter.short}; ${skill.short_setup.pullback} ${skill.short_setup.confirmation} Entry ${skill.short_setup.entry}`],
+        ["STOP", skill.long_setup.stop_loss],
+        ["TARGET", skill.long_setup.take_profit],
+      ];
+      $("#strategy-title").textContent = skill.name;
+      $("#skill-status").textContent = "RULES LOADED";
+      $("#skill-rules").innerHTML = rules.map(([label, text]) => `<p><b>${escapeHtml(label)}</b> ${escapeHtml(text)}</p>`).join("");
+      $("#skill-description").textContent = `${skill.description} ${skill.performance_note}`;
+      $("#skill-sources").innerHTML = skill.references.map((source) => `<a href="${escapeHtml(source.url)}" target="_blank" rel="noreferrer">${escapeHtml(source.title)}</a>`).join(" · ");
+    })
+    .catch((error) => {
+      $("#skill-status").textContent = "RULES NOT LOADED";
+      $("#analysis-status").textContent = error.message;
+    });
+}
+
 $("#chart-file").addEventListener("change", (event) => {
   handleFiles(event.target.files);
   event.target.value = "";
@@ -193,4 +301,4 @@ dropzone.addEventListener("drop", (event) => {
   handleFiles(event.dataTransfer.files);
 });
 
-if (getApiKey()) setConnectionState(true, "AI connected for this tab.");
+start();

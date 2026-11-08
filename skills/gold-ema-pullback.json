@@ -1,0 +1,51 @@
+{
+  "id": "gold-ema-pullback-v1",
+  "name": "Gold EMA Pullback",
+  "symbol": "XAUUSD",
+  "description": "A trend-continuation setup that waits for a pullback and candle confirmation.",
+  "image_reader": {
+    "method": "Detect green and red candle-color clusters from the chart image and estimate candle highs, lows, and closes in pixel space.",
+    "minimum_candles": 55,
+    "price_ocr": false,
+    "confidence_ceiling": "LOW"
+  },
+  "trend_filter": {
+    "fast_ema_period": 20,
+    "slow_ema_period": 50,
+    "long": "EMA20 above EMA50",
+    "short": "EMA20 below EMA50"
+  },
+  "long_setup": {
+    "pullback": "A recent candle low approaches EMA20 within 0.75 ATR(14).",
+    "confirmation": "Latest detected candle is bullish and closes above the previous candle high.",
+    "entry": "Above the confirmation candle high.",
+    "stop_loss": "Below the pullback swing low. Skip when risk is greater than 1.5 ATR(14).",
+    "take_profit": "2R from entry."
+  },
+  "short_setup": {
+    "pullback": "A recent candle high approaches EMA20 within 0.75 ATR(14).",
+    "confirmation": "Latest detected candle is bearish and closes below the previous candle low.",
+    "entry": "Below the confirmation candle low.",
+    "stop_loss": "Above the pullback swing high. Skip when risk is greater than 1.5 ATR(14).",
+    "take_profit": "2R from entry."
+  },
+  "no_trade_when": [
+    "Fewer than 55 candle groups are detected.",
+    "Candle colors are not distinguishable in the screenshot.",
+    "EMA trend, pullback, or confirmation conditions are not met.",
+    "The required stop-risk condition fails."
+  ],
+  "references": [
+    {
+      "title": "Moving Averages - Simple and Exponential",
+      "url": "https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-overlays/moving-averages-simple-and-exponential",
+      "relevance": "Moving averages smooth price and define trend direction but lag."
+    },
+    {
+      "title": "Average True Range (ATR)",
+      "url": "https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-indicators/average-true-range-atr",
+      "relevance": "ATR measures volatility and does not indicate price direction."
+    }
+  ],
+  "performance_note": "This is a research-informed starter rule, not a historically or forward-tested profitable system."
+}
