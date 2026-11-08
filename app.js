@@ -846,8 +846,8 @@ function loadScreenshot(file) {
     $("#screenshot-panel").hidden = false;
     $("#screenshot-idle").hidden = false;
     $("#screenshot-result").hidden = true;
-    $("#analyze-screenshot").disabled = true;
-    $("#screenshot-selection-label").textContent = "Drag over the plotted candles to select an area.";
+    $("#analyze-screenshot").disabled = false;
+    $("#screenshot-selection-label").textContent = "Ready to scan the full screenshot. Drag to select a crop if preferred.";
     drawScreenshot();
     $("#screenshot-panel").scrollIntoView({ behavior: "smooth", block: "start" });
   };
@@ -859,8 +859,9 @@ function loadScreenshot(file) {
 }
 
 async function analyzeScreenshot() {
-  const crop = screenshotState.crop;
-  if (!crop || crop.width < 40 || crop.height < 30) return;
+  if (!screenshotState.image) return;
+  const crop = screenshotState.crop || { x: 0, y: 0, width: screenshotCanvas.width, height: screenshotCanvas.height };
+  if (crop.width < 40 || crop.height < 30) return;
   if (!getApiKey()) {
     $("#agent-test-state").textContent = "CONNECT GEMINI";
     $("#agent-message").textContent = "Add your Google AI Studio API key under Connect AI model to analyze the chart image.";
@@ -883,7 +884,7 @@ async function analyzeScreenshot() {
     if (!blob) throw new Error("Could not prepare this image crop.");
     const imageData = await blobToBase64(blob);
     const result = await geminiGenerate([
-      { text: "Analyze this cropped XAU/USD trading chart. Extract only information visibly supported by the image. Never invent prices or levels; use null if unreadable or absent. Return JSON: {direction:'long|short|wait|unclear', confidence:'low|medium|high', visualSummary:string, currentPrice:number|null, entry:number|null, stopLoss:number|null, takeProfit:number|null, caveats:string[]}. Distinguish an observed written level from your own suggested level. This is educational analysis, not a guarantee." },
+      { text: "Analyze this XAU/USD trading-chart screenshot or crop. Locate the chart plot and inspect any visible price labels or marked levels. Extract only information visibly supported by the image. Never invent prices or levels; use null if unreadable or absent. Return JSON: {direction:'long|short|wait|unclear', confidence:'low|medium|high', visualSummary:string, currentPrice:number|null, entry:number|null, stopLoss:number|null, takeProfit:number|null, caveats:string[]}. Distinguish an observed written level from your own suggested level. This is educational analysis, not a guarantee." },
       { inline_data: { mime_type: "image/jpeg", data: imageData } },
     ]);
     $("#screenshot-idle").hidden = true;
@@ -901,7 +902,7 @@ async function analyzeScreenshot() {
     $("#screenshot-selection-label").textContent = "Analysis failed. Check Gemini connection and retry.";
     $("#agent-message").textContent = error.message;
   } finally {
-    button.disabled = !screenshotState.crop;
+    button.disabled = !screenshotState.image;
   }
 }
 
@@ -944,10 +945,14 @@ screenshotCanvas.addEventListener("pointerup", (event) => {
   screenshotState.start = null;
   const crop = screenshotState.crop;
   const valid = crop && crop.width >= 40 && crop.height >= 30;
-  $("#analyze-screenshot").disabled = !valid;
+  if (!valid) {
+    screenshotState.crop = null;
+    drawScreenshot();
+  }
+  $("#analyze-screenshot").disabled = false;
   $("#screenshot-selection-label").textContent = valid
     ? `Selected area · ${Math.round(crop.width)} × ${Math.round(crop.height)} px`
-    : "Select a larger chart area to enable analysis.";
+    : "Small selection cleared. The AI will scan the full screenshot.";
 });
 
 $("#analyze-screenshot").addEventListener("click", analyzeScreenshot);
