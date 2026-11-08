@@ -24,6 +24,102 @@ const chartContext = chart.getContext("2d");
 const screenshotCanvas = $("#screenshot-canvas");
 const screenshotContext = screenshotCanvas.getContext("2d");
 const screenshotState = { image: null, url: null, crop: null, start: null };
+const AI_KEY_STORAGE = "gill-gemini-key-session";
+let strategyVideoFile = null;
+let videoUrl = null;
+
+function getApiKey() {
+  return sessionStorage.getItem(AI_KEY_STORAGE) || "";
+}
+
+function geminiEndpoint(path) {
+  return `https://generativelanguage.googleapis.com/v1beta/${path}`;
+}
+
+async function geminiGenerate(parts) {
+  const key = getApiKey();
+  if (!key) throw new Error("Connect your Google AI Studio key first.");
+  const response = await fetch(`${geminiEndpoint("models/gemini-2.5-flash:generateContent")}?key=${encodeURIComponent(key)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts }],
+      generationConfig: { responseMimeType: "application/json" },
+    }),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error?.message || `Gemini request failed (${response.status}).`);
+  const text = result.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("").trim();
+  if (!text) throw new Error("Gemini returned no analysis. Try another image or video.");
+  try {
+    return JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ""));
+  } catch {
+    throw new Error("Gemini returned an unreadable response. Please retry.");
+  }
+}
+
+async function uploadVideoToGemini(file) {
+  const key = getApiKey();
+  const mimeType = file.type || "video/mp4";
+  const start = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${encodeURIComponent(key)}`, {
+    method: "POST",
+    headers: {
+      "X-Goog-Upload-Protocol": "resumable",
+      "X-Goog-Upload-Command": "start",
+      "X-Goog-Upload-Header-Content-Length": String(file.size),
+      "X-Goog-Upload-Header-Content-Type": mimeType,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ file: { display_name: file.name } }),
+  });
+  if (!start.ok) {
+    const error = await start.json().catch(() => ({}));
+    throw new Error(error.error?.message || `Gemini video upload failed (${start.status}).`);
+  }
+  const uploadUrl = start.headers.get("x-goog-upload-url");
+  if (!uploadUrl) throw new Error("Gemini did not return a video upload URL.");
+  const uploaded = await fetch(uploadUrl, {
+    method: "POST",
+    headers: { "X-Goog-Upload-Offset": "0", "X-Goog-Upload-Command": "upload, finalize", "Content-Type": mimeType },
+    body: file,
+  });
+  const uploadResult = await uploaded.json();
+  if (!uploaded.ok) throw new Error(uploadResult.error?.message || `Gemini video upload failed (${uploaded.status}).`);
+  let uploadedFile = uploadResult.file;
+  for (let attempt = 0; uploadedFile?.state === "PROCESSING" && attempt < 60; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    const status = await fetch(`https://generativelanguage.googleapis.com/v1beta/${uploadedFile.name}?key=${encodeURIComponent(key)}`);
+    const statusResult = await status.json();
+    if (!status.ok) throw new Error(statusResult.error?.message || "Could not check video processing status.");
+    uploadedFile = statusResult;
+  }
+  if (uploadedFile?.state === "FAILED") throw new Error("Gemini could not process this video format.");
+  if (uploadedFile?.state === "PROCESSING") throw new Error("Video is still processing. Try again in a moment.");
+  if (!uploadedFile?.uri) throw new Error("Gemini did not return a processed video.");
+  return { file_data: { mime_type: uploadedFile.mimeType || mimeType, file_uri: uploadedFile.uri } };
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1]);
+    reader.onerror = () => reject(new Error("Could not prepare the selected chart crop."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+if (getApiKey()) $("#gemini-key-state").textContent = "Gemini key is connected for this tab only.";
+$("#save-gemini-key").addEventListener("click", () => {
+  const key = $("#gemini-api-key").value.trim();
+  if (!key) {
+    sessionStorage.removeItem(AI_KEY_STORAGE);
+    $("#gemini-key-state").textContent = "Gemini key cleared from this tab.";
+    return;
+  }
+  sessionStorage.setItem(AI_KEY_STORAGE, key);
+  $("#gemini-api-key").value = "";
+  $("#gemini-key-state").textContent = "Gemini key is connected for this tab only.";
+});
 
 function readStorage() {
   try {
@@ -136,6 +232,11 @@ function getAnalysisBars() {
 
 function rawScore(type, features, params = {}) {
   const { latest, currentRsi, currentAtr, upTrend, rangeHigh, rangeLow, sweptLow, sweptHigh } = features;
+  if (type === "rules") {
+    const long = evaluateRule(params.longEntry, features);
+    const short = evaluateRule(params.shortEntry, features);
+    return long === short ? 0 : long ? 1 : -1;
+  }
   if (type === "trend") {
     const fast = ema(features.closes, Math.min(params.fastPeriod || 9, features.closes.length)).at(-1);
     const slow = ema(features.closes, Math.min(params.slowPeriod || 21, features.closes.length)).at(-1);
@@ -167,6 +268,119 @@ function rawScore(type, features, params = {}) {
     return Math.max(-0.55, Math.min(0.55, (lowerWick - upperWick) / Math.max(currentAtr, 0.01)));
   }
   return 0;
+}
+
+function validateRuleTree(node, depth = 0) {
+  if (!node || typeof node !== "object" || depth > 5) return null;
+  if (Array.isArray(node.all) || Array.isArray(node.any)) {
+    const operator = Array.isArray(node.all) ? "all" : "any";
+    const children = node[operator];
+    if (!children.length || children.length > 10) return null;
+    const validated = children.map((child) => validateRuleTree(child, depth + 1));
+    return validated.every(Boolean) ? { [operator]: validated } : null;
+  }
+  const indicator = String(node.indicator || "").toLowerCase();
+  if (indicator === "rsi") {
+    const operator = ["lt", "lte", "gt", "gte"].includes(node.operator) ? node.operator : null;
+    const period = Number(node.period || 14);
+    const value = Number(node.value);
+    if (!operator || !Number.isFinite(period) || !Number.isFinite(value) || period < 2 || period > 50 || value < 0 || value > 100) return null;
+    return { indicator, operator, period, value };
+  }
+  if (indicator === "ema_cross") {
+    const fast = Number(node.fast || 9);
+    const slow = Number(node.slow || 21);
+    if (![fast, slow].every(Number.isFinite) || fast < 2 || fast > 100 || slow < 3 || slow > 250 || fast >= slow || !["bullish", "bearish"].includes(node.direction)) return null;
+    return { indicator, fast, slow, direction: node.direction };
+  }
+  if (indicator === "price_ema") {
+    const period = Number(node.period || 50);
+    if (!Number.isFinite(period) || period < 2 || period > 250 || !["above", "below"].includes(node.direction)) return null;
+    return { indicator, period, direction: node.direction };
+  }
+  if (indicator === "breakout") {
+    const period = Number(node.period || 20);
+    if (!Number.isFinite(period) || period < 5 || period > 200 || !["above", "below"].includes(node.direction)) return null;
+    return { indicator, period, direction: node.direction };
+  }
+  if (indicator === "macd_cross") {
+    if (!["bullish", "bearish"].includes(node.direction)) return null;
+    return { indicator, direction: node.direction };
+  }
+  if (indicator === "candle") {
+    const patterns = ["bullish", "bearish", "bullish_engulfing", "bearish_engulfing", "bullish_pinbar", "bearish_pinbar"];
+    return patterns.includes(node.pattern) ? { indicator, pattern: node.pattern } : null;
+  }
+  return null;
+}
+
+function evaluateRule(node, features) {
+  if (!node) return false;
+  if (node.all) return node.all.every((child) => evaluateRule(child, features));
+  if (node.any) return node.any.some((child) => evaluateRule(child, features));
+  const { bars, closes, latest, previous } = features;
+  if (node.indicator === "rsi") {
+    const value = rsi(closes, node.period);
+    return { lt: value < node.value, lte: value <= node.value, gt: value > node.value, gte: value >= node.value }[node.operator];
+  }
+  if (node.indicator === "ema_cross") {
+    if (closes.length < node.slow + 1) return false;
+    const currentFast = ema(closes, node.fast).at(-1);
+    const currentSlow = ema(closes, node.slow).at(-1);
+    const previousFast = ema(closes.slice(0, -1), node.fast).at(-1);
+    const previousSlow = ema(closes.slice(0, -1), node.slow).at(-1);
+    return node.direction === "bullish" ? previousFast <= previousSlow && currentFast > currentSlow : previousFast >= previousSlow && currentFast < currentSlow;
+  }
+  if (node.indicator === "price_ema") {
+    const average = ema(closes, node.period).at(-1);
+    return node.direction === "above" ? latest.close > average : latest.close < average;
+  }
+  if (node.indicator === "breakout") {
+    const prior = bars.slice(-node.period - 1, -1);
+    if (prior.length < node.period) return false;
+    return node.direction === "above" ? latest.close > Math.max(...prior.map((bar) => bar.high)) : latest.close < Math.min(...prior.map((bar) => bar.low));
+  }
+  if (node.indicator === "macd_cross") {
+    if (closes.length < 35) return false;
+    const macd = ema(closes, 12).map((value, index) => value - ema(closes, 26)[index]);
+    const signal = ema(macd, 9);
+    const index = closes.length - 1;
+    return node.direction === "bullish" ? macd[index] > signal[index] && macd[index - 1] <= signal[index - 1] : macd[index] < signal[index] && macd[index - 1] >= signal[index - 1];
+  }
+  if (node.indicator === "candle") {
+    const bullish = latest.close > latest.open;
+    const bearish = latest.close < latest.open;
+    const body = Math.abs(latest.close - latest.open);
+    const lowerWick = Math.min(latest.open, latest.close) - latest.low;
+    const upperWick = latest.high - Math.max(latest.open, latest.close);
+    if (node.pattern === "bullish") return bullish;
+    if (node.pattern === "bearish") return bearish;
+    if (node.pattern === "bullish_engulfing") return bullish && previous.close < previous.open && latest.close >= previous.open && latest.open <= previous.close;
+    if (node.pattern === "bearish_engulfing") return bearish && previous.close > previous.open && latest.close <= previous.open && latest.open >= previous.close;
+    if (node.pattern === "bullish_pinbar") return lowerWick > body * 2 && upperWick < body;
+    if (node.pattern === "bearish_pinbar") return upperWick > body * 2 && lowerWick < body;
+  }
+  return false;
+}
+
+function strategyFromModel(result, sourcePrompt) {
+  if (!result || typeof result.strategyName !== "string" || typeof result.summary !== "string") return null;
+  const longEntry = validateRuleTree(result.longEntry);
+  const shortEntry = validateRuleTree(result.shortEntry);
+  if (!longEntry || !shortEntry) return null;
+  const stopAtr = Number(result.stopAtr || 1);
+  const targetR = Number(result.targetR || 2);
+  if (!Number.isFinite(stopAtr) || !Number.isFinite(targetR) || stopAtr < 0.25 || stopAtr > 5 || targetR < 0.5 || targetR > 10) return null;
+  return {
+    id: `agent-${crypto.randomUUID()}`,
+    name: result.strategyName.trim().slice(0, 48),
+    type: "rules",
+    enabled: true,
+    custom: true,
+    params: { longEntry, shortEntry, stopAtr, targetR },
+    prompt: sourcePrompt,
+    summary: result.summary,
+  };
 }
 
 function strategyPerformance(id) {
@@ -267,39 +481,6 @@ function renderAgentStrategies() {
   ).join("") || "<span class=\"no-strategies\">No active strategies</span>";
 }
 
-function interpretStrategyPrompt(prompt) {
-  const text = prompt.trim();
-  const lower = text.toLowerCase();
-  let type;
-  if (/\brsi\b|relative strength|overbought|oversold|mean.?revert/.test(lower)) type = "mean";
-  else if (/break.?out|break.?down|range high|range low|donchian/.test(lower)) type = "momentum";
-  else if (/liquidity|sweep|stop.?hunt|wick|order block/.test(lower)) type = "liquidity";
-  else if (/\bema\b|moving average|trend follow/.test(lower)) type = "trend";
-  if (!type) return null;
-
-  const params = {};
-  if (type === "trend") {
-    const periods = [...text.matchAll(/\bema\s*(\d{1,3})/gi)].map((match) => Number(match[1])).slice(0, 2);
-    if (periods.length === 1) params.slowPeriod = periods[0];
-    if (periods.length === 2) [params.fastPeriod, params.slowPeriod] = periods;
-  }
-  if (type === "mean") {
-    const period = text.match(/\brsi\s*(\d{1,2})\b/i);
-    const oversold = text.match(/\brsi\b.{0,35}?(?:below|under|less than|<)\s*(\d{1,2})/i);
-    const overbought = text.match(/\brsi\b.{0,35}?(?:above|over|greater than|>)\s*(\d{1,2})/i);
-    if (period && Number(period[1]) >= 2 && Number(period[1]) <= 50) params.rsiPeriod = Number(period[1]);
-    if (oversold && Number(oversold[1]) >= 5 && Number(oversold[1]) <= 45) params.oversold = Number(oversold[1]);
-    if (overbought && Number(overbought[1]) >= 55 && Number(overbought[1]) <= 95) params.overbought = Number(overbought[1]);
-  }
-  if (type === "momentum") {
-    const lookback = text.match(/(?:last|previous|prior|breakout of)\s*(\d{1,3})\s*(?:bars?|candles?)/i);
-    if (lookback) params.lookback = Math.max(5, Math.min(100, Number(lookback[1])));
-  }
-  const named = text.match(/(?:strategy\s+name|name)\s*:\s*([^\n.;]+)/i);
-  const name = named?.[1]?.trim() || `${typeLabel(type)} · prompt rule`;
-  return { id: `agent-${crypto.randomUUID()}`, name: name.slice(0, 48), type, enabled: true, custom: true, params, prompt: text };
-}
-
 function scoreStrategies(strategies, features) {
   const enabled = strategies.filter((strategy) => strategy.enabled);
   if (!enabled.length) return 0;
@@ -311,12 +492,14 @@ function scoreStrategies(strategies, features) {
   return votes.reduce((sum, vote) => sum + vote.score * vote.weight, 0) / totalWeight;
 }
 
-function simulatedR(bars, index, direction, currentAtr) {
+function simulatedR(bars, index, direction, currentAtr, settings) {
   const entry = bars[index].close;
-  const risk = currentAtr * state.stopAtr;
+  const stopAtr = settings.stopAtr ?? state.stopAtr;
+  const targetR = settings.targetR ?? state.targetR;
+  const risk = currentAtr * stopAtr;
   const sign = Math.sign(direction);
   const stop = entry - sign * risk;
-  const target = entry + sign * risk * state.targetR;
+  const target = entry + sign * risk * targetR;
   const horizon = Math.min(12, bars.length - index - 1);
   for (let offset = 1; offset <= horizon; offset += 1) {
     const bar = bars[index + offset];
@@ -324,15 +507,16 @@ function simulatedR(bars, index, direction, currentAtr) {
     const targeted = sign > 0 ? bar.high >= target : bar.low <= target;
     if (stopped && targeted) return -1;
     if (stopped) return -1;
-    if (targeted) return state.targetR;
+    if (targeted) return targetR;
   }
   const finalMove = (bars[index + horizon].close - entry) * sign / Math.max(risk, 0.000001);
-  return Math.max(-1, Math.min(state.targetR, finalMove));
+  return Math.max(-1, Math.min(targetR, finalMove));
 }
 
 function evaluateBlend(bars, candidate = null) {
   const baseline = state.strategies.filter((strategy) => strategy.enabled);
   const combined = candidate ? [...baseline, candidate] : baseline;
+  const settings = candidate?.params || { stopAtr: state.stopAtr, targetR: state.targetR };
   const firstIndex = Math.max(50, Math.floor(bars.length * 0.7));
   const outcomes = { baseline: [], combined: [] };
   for (let index = firstIndex; index < bars.length - 12; index += 4) {
@@ -340,7 +524,7 @@ function evaluateBlend(bars, candidate = null) {
     for (const [key, strategies] of [["baseline", baseline], ["combined", combined]]) {
       const score = scoreStrategies(strategies, features);
       if (Math.abs(score) <= 0.18) continue;
-      outcomes[key].push(simulatedR(bars, index, score, features.currentAtr));
+      outcomes[key].push(simulatedR(bars, index, score, features.currentAtr, settings));
     }
   }
   const summarize = (values) => ({
@@ -359,12 +543,19 @@ function displayBacktest(result) {
   $("#candidate-count").textContent = `${result.combined.count} held-out signals`;
 }
 
-$("#test-strategy").addEventListener("click", () => {
+$("#test-strategy").addEventListener("click", async () => {
   const prompt = $("#strategy-prompt").value.trim();
+  const button = $("#test-strategy");
   $("#agent-comparison").hidden = true;
+  if (!getApiKey()) {
+    $("#agent-test-state").textContent = "CONNECT GEMINI";
+    $("#agent-message").textContent = "Add your Google AI Studio API key under Connect AI model. The key stays in this tab and is sent only to Google.";
+    $(".ai-connection").open = true;
+    return;
+  }
   if (!state.dataReady) {
     $("#agent-test-state").textContent = "IMPORT PRICE DATA";
-    $("#agent-message").textContent = "Import real XAU/USD OHLC candles first. Demo candles are not used to approve strategies or show trade levels.";
+    $("#agent-message").textContent = "Add historical XAU/USD candles first so extracted rules can be tested before they change the blend.";
     return;
   }
   if (getAnalysisBars().length < 250) {
@@ -372,54 +563,76 @@ $("#test-strategy").addEventListener("click", () => {
     $("#agent-message").textContent = "Import at least 250 candles. The last 30% is held out from strategy evaluation.";
     return;
   }
-  if (!prompt) {
+  if (!prompt && !strategyVideoFile) {
     $("#agent-test-state").textContent = "ADD RULES";
-    $("#agent-message").textContent = "Describe the entry rules or paste the relevant tutorial transcript.";
+    $("#agent-message").textContent = "Describe a strategy or add a tutorial video.";
     return;
   }
-  const candidate = interpretStrategyPrompt(prompt);
-  if (!candidate) {
-    $("#agent-test-state").textContent = "RULE NOT RECOGNIZED";
-    $("#agent-message").textContent = "Use a supported family in the prompt: EMA trend, RSI mean reversion, range breakout, or liquidity sweep.";
-    return;
+  button.disabled = true;
+  try {
+    $("#agent-test-state").textContent = strategyVideoFile ? "UPLOADING TUTORIAL" : "READING STRATEGY";
+    const parts = [{ text: [
+      "Analyze the user's trading strategy prompt and attached tutorial media. Extract the actual entry rules; do not invent missing rules.",
+      "Return JSON only with: strategyName, summary, backtestable, limitations, longEntry, shortEntry, stopAtr, targetR.",
+      "Represent entries as a tree using {all:[...]}, {any:[...]}, or leaves.",
+      "Allowed leaves: {indicator:'rsi',period:14,operator:'lt|lte|gt|gte',value:30}; {indicator:'ema_cross',fast:9,slow:21,direction:'bullish|bearish'}; {indicator:'price_ema',period:50,direction:'above|below'}; {indicator:'breakout',period:20,direction:'above|below'}; {indicator:'macd_cross',direction:'bullish|bearish'}; {indicator:'candle',pattern:'bullish|bearish|bullish_engulfing|bearish_engulfing|bullish_pinbar|bearish_pinbar'}.",
+      "Use nested any/all to express complex strategies. The app backtests these rules on the user's candles. If the taught rules require unavailable data or cannot be represented faithfully, set backtestable false and explain why in limitations; never silently replace a rule with a different one.",
+      "Use stopAtr and targetR from the taught strategy when present; otherwise choose conservative defaults of 1 and 2. Numeric values must be finite.",
+      `User prompt/transcript: ${prompt || "No extra prompt; extract rules from the attached tutorial."}`,
+    ].join("\n") }];
+    if (strategyVideoFile) {
+      const videoPart = await uploadVideoToGemini(strategyVideoFile);
+      parts.push(videoPart);
+      $("#agent-test-state").textContent = "STUDYING TUTORIAL";
+    }
+    const extracted = await geminiGenerate(parts);
+    if (extracted.backtestable === false) {
+      $("#agent-test-state").textContent = "RULES NEED MORE DATA";
+      $("#agent-message").textContent = extracted.limitations || extracted.summary || "The strategy needs information that is not present in the uploaded candles.";
+      return;
+    }
+    const candidate = strategyFromModel(extracted, prompt);
+    if (!candidate) throw new Error("The model could not express this strategy in backtestable entry rules. Add more detail and retry.");
+    $("#agent-test-state").textContent = "BACKTESTING RULES";
+    const result = evaluateBlend(getAnalysisBars(), candidate);
+    displayBacktest(result);
+    if (result.baseline.count < 8 || result.combined.count < 8) {
+      $("#agent-test-state").textContent = "TOO FEW SIGNALS";
+      $("#agent-message").textContent = `${candidate.summary} Test history produced fewer than 8 held-out signals; nothing was added.`;
+      return;
+    }
+    const improves = result.combined.avgR >= result.baseline.avgR + 0.05
+      && result.combined.wins >= result.baseline.wins - 0.05
+      && result.combined.count >= result.baseline.count * 0.7;
+    if (!improves) {
+      $("#agent-test-state").textContent = "NOT PROMOTED";
+      $("#agent-message").textContent = `${candidate.summary} The combined rules did not pass the held-out improvement check, so your current blend stays unchanged.`;
+      return;
+    }
+    state.strategies.push(candidate);
+    state.strategyVersion += 1;
+    state.strategyName = `${candidate.name} Fusion`;
+    state.stopAtr = candidate.params.stopAtr;
+    state.targetR = candidate.params.targetR;
+    saveStorage();
+    render();
+    displayBacktest(result);
+    $("#agent-test-state").textContent = "NEW VERSION PROMOTED";
+    $("#agent-message").textContent = `${candidate.summary} Promoted as ${state.strategyName} v${state.strategyVersion}; historical gains are not a guarantee of future performance.`;
+  } catch (error) {
+    $("#agent-test-state").textContent = "ANALYSIS FAILED";
+    $("#agent-message").textContent = error.message || "Could not analyze this media. Check the key, file format, and network, then retry.";
+  } finally {
+    button.disabled = false;
   }
-  candidate.sourceVideo = $("#video-file-name").textContent === "Attach tutorial video" ? "" : $("#video-file-name").textContent;
-  const result = evaluateBlend(getAnalysisBars(), candidate);
-  displayBacktest(result);
-  if (result.baseline.count < 8 || result.combined.count < 8) {
-    $("#agent-test-state").textContent = "TOO FEW SIGNALS";
-    $("#agent-message").textContent = "The held-out segment produced fewer than 8 signals. No strategy was added; use more data or a less restrictive rule.";
-    return;
-  }
-  const improves = result.combined.avgR >= result.baseline.avgR + 0.05
-    && result.combined.wins >= result.baseline.wins - 0.05
-    && result.combined.count >= result.baseline.count * 0.7;
-  if (!improves) {
-    $("#agent-test-state").textContent = "NOT PROMOTED";
-    $("#agent-message").textContent = "This rule did not beat the current blend by the promotion threshold on held-out candles. The active strategy was left unchanged.";
-    return;
-  }
-  state.strategies.push(candidate);
-  state.strategyVersion += 1;
-  state.strategyName = `Gill Gold ${typeLabel(candidate.type).replace(/\s+.*/, "")} Fusion`;
-  saveStorage();
-  render();
-  displayBacktest(result);
-  $("#agent-test-state").textContent = "PROMOTED TO BLEND";
-  $("#agent-message").textContent = `${candidate.name} improved held-out average R while keeping win rate and signal count within the promotion guard. This is historical evidence, not a future-performance guarantee.`;
 });
 
-let videoUrl = null;
 $("#strategy-video-file").addEventListener("change", (event) => {
   const file = event.target.files[0];
   if (!file) return;
-  if (file.size > 250 * 1024 * 1024) {
-    showToast("Tutorial video must be 250 MB or smaller.");
-    event.target.value = "";
-    return;
-  }
   if (videoUrl) URL.revokeObjectURL(videoUrl);
   videoUrl = URL.createObjectURL(file);
+  strategyVideoFile = file;
   $("#strategy-video").src = videoUrl;
   $("#strategy-video").hidden = false;
   $("#video-file-name").textContent = file.name;
@@ -472,7 +685,7 @@ function renderJournal() {
 }
 
 function typeLabel(type) {
-  return { trend: "EMA trend following", momentum: "Range expansion", mean: "RSI mean reversion", liquidity: "Wick sweep rejection" }[type] || "Custom indicator family";
+  return { trend: "EMA trend following", momentum: "Range expansion", mean: "RSI mean reversion", liquidity: "Wick sweep rejection", rules: "AI-extracted rules" }[type] || "Custom strategy";
 }
 
 function escapeHtml(text) {
@@ -612,12 +825,8 @@ function updateScreenshotCrop(point) {
 
 function loadScreenshot(file) {
   if (!file) return;
-  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
-    showToast("Choose a PNG, JPG, or WEBP chart image.");
-    return;
-  }
-  if (file.size > 15 * 1024 * 1024) {
-    showToast("Screenshot must be 15 MB or smaller.");
+  if (!file.type.startsWith("image/")) {
+    showToast("Choose an image file or take a chart photo.");
     return;
   }
   const url = URL.createObjectURL(file);
@@ -649,84 +858,51 @@ function loadScreenshot(file) {
   image.src = url;
 }
 
-function median(values) {
-  const sorted = [...values].sort((first, second) => first - second);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-}
-
-function analyzeScreenshot() {
+async function analyzeScreenshot() {
   const crop = screenshotState.crop;
   if (!crop || crop.width < 40 || crop.height < 30) return;
-  const left = Math.max(0, Math.floor(crop.x));
-  const top = Math.max(0, Math.floor(crop.y));
-  const width = Math.min(screenshotCanvas.width - left, Math.floor(crop.width));
-  const height = Math.min(screenshotCanvas.height - top, Math.floor(crop.height));
-  const pixels = screenshotContext.getImageData(left, top, width, height).data;
-  const columns = Array.from({ length: width }, () => ({ ys: [], green: 0, red: 0 }));
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const offset = (y * width + x) * 4;
-      const red = pixels[offset];
-      const green = pixels[offset + 1];
-      const blue = pixels[offset + 2];
-      if (green > 80 && green > red * 1.22 && green > blue * 0.84 && green - red > 24) {
-        columns[x].ys.push(y);
-        columns[x].green += 1;
-      } else if (red > 85 && red > green * 1.22 && red > blue * 1.08 && red - green > 24) {
-        columns[x].ys.push(y);
-        columns[x].red += 1;
-      }
-    }
-  }
-  const groups = [];
-  let group = null;
-  const finishGroup = () => {
-    if (!group) return;
-    const span = group.last - group.first + 1;
-    const verticalSpan = Math.max(...group.ys) - Math.min(...group.ys);
-    if (span <= 20 && verticalSpan >= Math.max(5, height * 0.006)) {
-      groups.push({ x: (group.first + group.last) / 2, y: median(group.ys), green: group.green, red: group.red });
-    }
-    group = null;
-  };
-  columns.forEach((column, x) => {
-    if (!column.ys.length) {
-      if (group && x - group.last > 2) finishGroup();
-      return;
-    }
-    if (group && x - group.last > 2) finishGroup();
-    if (!group) group = { first: x, last: x, ys: [], green: 0, red: 0 };
-    group.last = x;
-    group.ys.push(...column.ys);
-    group.green += column.green;
-    group.red += column.red;
-  });
-  finishGroup();
-
-  $("#screenshot-idle").hidden = true;
-  $("#screenshot-result").hidden = false;
-  const trend = $("#screenshot-trend");
-  if (groups.length < 6) {
-    trend.textContent = "Not enough clear bars";
-    trend.style.color = "var(--gold)";
-    $("#screenshot-bars").textContent = String(groups.length);
-    $("#screenshot-colors").textContent = "—";
-    $("#screenshot-summary").textContent = "Select only the candle plot, excluding axes, labels, and menus. This scan needs distinct red/green candle colors to estimate a visual trend.";
+  if (!getApiKey()) {
+    $("#agent-test-state").textContent = "CONNECT GEMINI";
+    $("#agent-message").textContent = "Add your Google AI Studio API key under Connect AI model to analyze the chart image.";
+    $(".ai-connection").open = true;
     return;
   }
-  const segmentSize = Math.max(2, Math.floor(groups.length * 0.25));
-  const startY = median(groups.slice(0, segmentSize).map((bar) => bar.y));
-  const endY = median(groups.slice(-segmentSize).map((bar) => bar.y));
-  const drift = (startY - endY) / height;
-  const visualTrend = drift > 0.06 ? "Rising visual structure" : drift < -0.06 ? "Falling visual structure" : "Sideways / mixed structure";
-  const bullishBars = groups.filter((bar) => bar.green >= bar.red).length;
-  const bearishBars = groups.length - bullishBars;
-  trend.textContent = visualTrend;
-  trend.style.color = drift < -0.06 ? "var(--red)" : drift > 0.06 ? "var(--green)" : "var(--gold)";
-  $("#screenshot-bars").textContent = String(groups.length);
-  $("#screenshot-colors").textContent = `${bullishBars} / ${bearishBars}`;
-  $("#screenshot-summary").textContent = `Estimated from ${groups.length} colored image clusters. Their vertical positions suggest a ${visualTrend.toLowerCase()} from left to right; these are pixel estimates, not extracted OHLC prices.`;
+  const button = $("#analyze-screenshot");
+  button.disabled = true;
+  $("#screenshot-idle").hidden = false;
+  $("#screenshot-result").hidden = true;
+  $("#screenshot-selection-label").textContent = "Sending selected chart crop to Gemini…";
+  try {
+    const source = document.createElement("canvas");
+    const maxSide = 2048;
+    const scale = Math.min(1, maxSide / crop.width, maxSide / crop.height);
+    source.width = Math.round(crop.width * scale);
+    source.height = Math.round(crop.height * scale);
+    source.getContext("2d").drawImage(screenshotState.image, crop.x, crop.y, crop.width, crop.height, 0, 0, source.width, source.height);
+    const blob = await new Promise((resolve) => source.toBlob(resolve, "image/jpeg", 0.88));
+    if (!blob) throw new Error("Could not prepare this image crop.");
+    const imageData = await blobToBase64(blob);
+    const result = await geminiGenerate([
+      { text: "Analyze this cropped XAU/USD trading chart. Extract only information visibly supported by the image. Never invent prices or levels; use null if unreadable or absent. Return JSON: {direction:'long|short|wait|unclear', confidence:'low|medium|high', visualSummary:string, currentPrice:number|null, entry:number|null, stopLoss:number|null, takeProfit:number|null, caveats:string[]}. Distinguish an observed written level from your own suggested level. This is educational analysis, not a guarantee." },
+      { inline_data: { mime_type: "image/jpeg", data: imageData } },
+    ]);
+    $("#screenshot-idle").hidden = true;
+    $("#screenshot-result").hidden = false;
+    $("#screenshot-trend").textContent = `${String(result.direction || "unclear").toUpperCase()} · ${String(result.confidence || "low").toUpperCase()} CONFIDENCE`;
+    $("#screenshot-trend").style.color = result.direction === "long" ? "var(--green)" : result.direction === "short" ? "var(--red)" : "var(--gold)";
+    $("#screenshot-bars").textContent = result.currentPrice == null ? "Not legible" : formatPrice(Number(result.currentPrice));
+    const levelText = [result.entry, result.stopLoss, result.takeProfit].map((value) => value == null ? "—" : formatPrice(Number(value))).join(" / ");
+    $("#screenshot-colors").textContent = levelText;
+    const caveats = Array.isArray(result.caveats) ? result.caveats.join(" ") : String(result.caveats || "");
+    const priceNote = result.currentPrice == null ? "" : ` Last visible price: ${formatPrice(Number(result.currentPrice))}.`;
+    $("#screenshot-summary").textContent = `${result.visualSummary || "No clear chart read."}${priceNote}${caveats ? ` ${caveats}` : ""}`;
+    $("#screenshot-selection-label").textContent = "AI read complete. Verify all levels against your broker chart.";
+  } catch (error) {
+    $("#screenshot-selection-label").textContent = "Analysis failed. Check Gemini connection and retry.";
+    $("#agent-message").textContent = error.message;
+  } finally {
+    button.disabled = !screenshotState.crop;
+  }
 }
 
 $("#screenshot-file").addEventListener("change", (event) => {

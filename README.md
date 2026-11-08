@@ -1,6 +1,6 @@
 # Gill Gold Analyst
 
-Offline-first personal XAU/USD strategy lab. Images, videos, prompts, and price history are processed locally; there is no backend or live market feed.
+Personal XAU/USD strategy lab. The static app has no backend or live market feed; Gemini performs AI analysis when you connect your own API key.
 
 ## Run locally
 
@@ -10,14 +10,16 @@ python3 -m http.server 4173
 
 Open http://localhost:4173. No install or build step is required.
 
+## Connect Gemini
+
+Create a [Google AI Studio API key](https://aistudio.google.com/apikey) and enter it under **Connect AI model**. It is held in the current browser tab's session storage and is not included in the repository. Requests go directly to Google Gemini, including the selected chart crop, uploaded tutorial video, or prompt. Review Google's terms and apply API-key restrictions and quotas. Do not share the key or use this direct-browser setup for a multi-user service.
+
 ## Chart image
 
-Use **Choose image / camera** to select a chart screenshot or take a photo on a supported device, then select the candle plot and analyze it. The local pixel scan estimates visible candle groups and broad visual direction; it does not read prices, indicators, or trade levels.
+Choose a screenshot or take a phone photo, crop the chart area, and ask Gemini for a visual read and visible entry/stop/target levels. Verify every extracted price manually; image-based values can be wrong.
 
-## Strategy lab
+## Strategy agent
 
-Describe a strategy in the prompt, add a tutorial video for local preview, and optionally import captions/transcript (`.srt`, `.vtt`, or `.txt`). The offline app cannot transcribe or understand video audio. It recognizes a limited set of EMA trend, RSI mean-reversion, range-breakout, and liquidity-sweep rules.
+Upload a tutorial video, add captions/transcript if available, or enter any strategy prompt. Gemini extracts entry rules into a validated indicator-rule format, then the app tests the combination against the final 30% of at least 250 imported historical OHLC candles. Videos are uploaded directly to Gemini for processing and may be subject to its supported formats and limits.
 
-Import at least 250 historical OHLC candles (`open`, `high`, `low`, `close`, and optionally `time`, `date`, `datetime`, or `timestamp`; oldest first) so it can backtest new rules. Candidates are blended with enabled rules and tested on the last 30% of the data. A candidate is promoted only with at least 8 held-out signals, average R improvement of at least 0.05, win rate no more than 5 points lower, and at least 70% of the prior signal count. Each promoted blend gets a saved local name and version.
-
-This is a rule-based parser and historical filter, not a general-purpose AI model or autonomous machine-learning system. Repeatedly testing rules against the same history can overfit; a promoted version is not guaranteed to perform better live.
+A candidate is promoted only with at least 8 held-out signals, average R improvement of at least 0.05, win rate no more than 5 points lower, and at least 70% of the prior signal count. This guard can still overfit repeated experiments and does not guarantee future improvement. Strategies that require data missing from the imported candles cannot be backtested faithfully.
