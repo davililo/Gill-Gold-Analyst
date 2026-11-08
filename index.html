@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101513" />
+    <title>Gill Gold Analyst</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#overview" aria-label="Gill Gold Analyst home">
+          <span class="brand-mark">G<span>+</span></span>
+          <span class="brand-copy"><strong>GILL</strong><small>GOLD ANALYST</small></span>
+        </a>
+        <div class="topbar-right">
+          <span class="local-indicator"><i></i> LOCAL ANALYSIS</span>
+          <span class="avatar" aria-label="Local workspace">G</span>
+        </div>
+      </header>
+
+      <main id="overview">
+        <section class="page-heading">
+          <div>
+            <p class="eyebrow">PRIVATE WORKSPACE <span>/</span> XAUUSD</p>
+            <h1>Gold strategy lab</h1>
+            <p class="subhead">Analyze a chart image. Teach, test, and combine trading rules.</p>
+          </div>
+        </section>
+
+        <section class="market-strip" aria-label="Market summary">
+          <div class="market-primary">
+            <div class="instrument"><span class="gold-dot"></span><span>XAU / USD</span><span class="market-status">SPOT GOLD</span></div>
+            <div class="price-row"><strong id="last-price">—</strong><span id="price-change" class="price-change">—</span></div>
+            <div id="data-source" class="data-source">NO MARKET DATA</div>
+          </div>
+          <div class="market-stat"><span>STRUCTURE</span><strong id="structure-value">—</strong><small id="structure-note">EMA 9 / 21</small></div>
+          <div class="market-stat"><span>RSI · 14</span><strong id="rsi-value">—</strong><small id="rsi-note">Neutral momentum</small></div>
+          <div class="market-stat"><span>ATR · 14</span><strong id="atr-value">—</strong><small>Volatility range</small></div>
+          <div class="market-stat"><span>LAST BAR</span><strong id="bar-time">—</strong><small id="bar-date">—</small></div>
+        </section>
+
+        <div class="workspace-grid">
+          <section class="panel chart-panel" aria-labelledby="chart-title">
+            <div class="panel-heading chart-heading">
+              <div><p class="eyebrow">PRICE ACTION</p><h2 id="chart-title">Candlestick structure</h2></div>
+              <div class="chart-tools">
+                <div class="segmented" role="group" aria-label="Chart timeframe">
+                  <button type="button" data-timeframe="1H" class="selected">1H</button>
+                  <button type="button" data-timeframe="4H">4H</button>
+                  <button type="button" data-timeframe="1D">1D</button>
+                </div>
+                <span class="chart-legend"><i></i> EMA 21</span>
+              </div>
+            </div>
+            <div class="chart-wrap"><canvas id="price-chart" aria-label="XAU USD candlestick price chart"></canvas></div>
+            <div class="chart-footer"><span id="chart-period">LAST 80 BARS</span><span id="chart-label">SIMULATED DATASET</span></div>
+          </section>
+
+          <aside class="panel signal-panel" aria-labelledby="signal-title">
+            <div class="panel-heading">
+              <div><p class="eyebrow">BLENDED SETUP</p><h2 id="signal-title">Trade levels</h2></div>
+              <span id="plan-state" class="plan-state">NEEDS MARKET DATA</span>
+            </div>
+            <div id="signal-card" class="signal-card neutral">
+              <div class="signal-top"><span id="signal-direction">WAIT FOR DATA</span><span id="signal-confidence">—</span></div>
+              <div class="confidence-track"><span id="confidence-fill"></span></div>
+              <p id="signal-summary">Import a recent XAU/USD OHLC CSV to calculate a trade plan. Simulated demo candles are never used for trade levels.</p>
+            </div>
+            <div class="plan-config">
+              <label>Stop distance<select id="stop-atr"><option value="1">1.0 × ATR</option><option value="1.25">1.25 × ATR</option><option value="1.5">1.5 × ATR</option><option value="2">2.0 × ATR</option></select></label>
+              <label>Target<select id="target-r"><option value="1.5">1.5R</option><option value="2" selected>2R</option><option value="3">3R</option></select></label>
+            </div>
+            <div class="levels-list">
+              <div><span>ENTRY</span><strong id="level-entry">—</strong></div>
+              <div><span>STOP-LOSS</span><strong id="level-stop">—</strong></div>
+              <div><span>TAKE-PROFIT</span><strong id="level-target">—</strong></div>
+              <div><span>RISK / REWARD</span><strong id="level-rr">—</strong></div>
+            </div>
+            <p class="risk-note">Plan uses the latest candle close and ATR. Check spread, slippage, news, and broker pricing before trading.</p>
+          </aside>
+        </div>
+
+        <section class="panel agent-panel" aria-labelledby="agent-title">
+          <div class="panel-heading agent-heading">
+            <div><p class="eyebrow">02 / STRATEGY AGENT</p><h2 id="agent-title">Teach it a strategy</h2></div>
+            <span class="local-badge"><i></i> PRIVATE · LOCAL</span>
+          </div>
+          <div class="agent-grid">
+            <div class="agent-inputs">
+              <label class="video-picker" for="strategy-video-file"><span aria-hidden="true">▶</span><span><strong id="video-file-name">Add tutorial video</strong><small>MP4, WebM, or MOV · stays on this device</small></span><b>Browse</b></label>
+              <input id="strategy-video-file" type="file" accept="video/mp4,video/webm,video/quicktime" />
+              <video id="strategy-video" class="strategy-video" controls playsinline hidden></video>
+              <label class="transcript-picker" for="strategy-transcript-file">Add captions / transcript (.srt, .vtt, .txt)</label>
+              <input id="strategy-transcript-file" type="file" accept=".srt,.vtt,.txt,text/plain" />
+              <label class="transcript-picker market-data-picker" for="csv-file">Add historical XAU/USD candles for testing (.csv)</label>
+              <input id="csv-file" type="file" accept=".csv,text/csv" />
+              <label class="agent-prompt-label" for="strategy-prompt">Prompt or tutorial rules</label>
+              <textarea id="strategy-prompt" rows="5" maxlength="5000" placeholder="Describe when to enter and exit. Example: Buy when EMA 9 crosses above EMA 21; stop 1 ATR below entry; take profit at 2R.&#10;&#10;Add captions or paste the relevant tutorial transcript. The video itself is not transcribed offline."></textarea>
+              <button id="test-strategy" class="button button-primary agent-submit" type="button">Study, test, and combine <span>↗</span></button>
+            </div>
+            <div class="agent-results">
+              <div class="agent-result-heading"><span>YOUR CURRENT BLEND</span><span id="agent-test-state">AWAITING RULES</span></div>
+              <h3 id="strategy-version-name" class="strategy-version-name">Gill Gold Blend · v1</h3>
+              <div id="agent-strategies" class="agent-strategies"></div>
+              <p id="agent-message">Add a rule prompt or tutorial captions and import at least 250 candles. The agent tests rules before changing this blend.</p>
+              <div id="agent-comparison" class="agent-comparison" hidden>
+                <div><span>CURRENT BLEND</span><strong id="baseline-result">—</strong><small id="baseline-count">—</small></div>
+                <div><span>WITH NEW RULE</span><strong id="candidate-result">—</strong><small id="candidate-count">—</small></div>
+              </div>
+              <p class="agent-caveat">Video stays local but is not automatically transcribed. Add captions or type its rules. Historical backtests cannot guarantee future improvement.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="screenshot-panel" class="panel screenshot-panel" aria-labelledby="screenshot-title">
+          <div class="panel-heading screenshot-heading">
+            <div><p class="eyebrow">01 / CHART IMAGE</p><h2 id="screenshot-title">Upload a screenshot or take a photo <span id="screenshot-filename"></span></h2></div>
+            <div class="screenshot-heading-actions">
+              <label class="button button-primary" for="screenshot-file">Choose image / camera</label>
+              <input id="screenshot-file" type="file" accept="image/*" capture="environment" />
+              <button id="screenshot-clear" class="icon-button" type="button" title="Clear screenshot" aria-label="Clear screenshot">×</button>
+            </div>
+          </div>
+          <div class="screenshot-grid">
+            <div>
+              <div id="screenshot-stage" class="screenshot-stage">
+                <div id="screenshot-empty" class="screenshot-empty">
+                  <span class="screenshot-glyph" aria-hidden="true">▧</span>
+                  <strong>Drop a chart screenshot here</strong>
+                  <span>Drop the image here, or use Choose image / camera above.</span>
+                </div>
+                <div id="screenshot-canvas-wrap" class="screenshot-canvas-wrap" hidden>
+                  <canvas id="screenshot-canvas" aria-label="Uploaded screenshot; drag to select the candlestick plot area"></canvas>
+                </div>
+              </div>
+              <p class="screenshot-instruction">Select only the candle plot; leave out menus and price labels.</p>
+            </div>
+            <div class="screenshot-readout" aria-live="polite">
+              <div id="screenshot-idle" class="screenshot-idle"><p class="eyebrow">VISUAL READ</p><strong>Waiting for a chart image</strong><p>Choose or take a photo, then select the plotted candles.</p></div>
+              <div id="screenshot-result" class="screenshot-result" hidden>
+                <p class="eyebrow">SCREENSHOT READ</p>
+                <strong id="screenshot-trend" class="screenshot-trend">—</strong>
+                <div class="screenshot-metrics"><div><span>BAR GROUPS</span><strong id="screenshot-bars">—</strong></div><div><span>UP / DOWN COLORS</span><strong id="screenshot-colors">—</strong></div></div>
+                <p id="screenshot-summary" class="screenshot-summary"></p>
+              </div>
+              <p class="screenshot-limits">Local pixel heuristic only. It cannot read exact prices, timeframe, indicators, or reliably interpret every chart theme. Verify the image yourself.</p>
+            </div>
+          </div>
+          <div class="screenshot-actions">
+            <span id="screenshot-selection-label">Select the candle plot to enable analysis.</span>
+            <button id="analyze-screenshot" class="button button-primary" type="button" disabled>Analyze selected area <span>↗</span></button>
+          </div>
+        </section>
+
+        <section class="lower-grid">
+          <section class="panel strategies-panel" aria-labelledby="strategies-title">
+            <div class="panel-heading strategies-heading">
+              <div><p class="eyebrow">BLENDED MODEL</p><h2 id="strategies-title">Strategy components <span id="strategy-count">0</span></h2></div>
+              <button id="add-strategy" class="button button-secondary add-button" type="button"><span>+</span> Add strategy</button>
+            </div>
+            <p class="section-caption">Active setups vote together. Logged outcomes gently tune their local weights.</p>
+            <div id="strategy-list" class="strategy-list"></div>
+          </section>
+
+          <section class="panel learning-panel" aria-labelledby="learning-title">
+            <div class="panel-heading">
+              <div><p class="eyebrow">LOCAL FEEDBACK</p><h2 id="learning-title">Learning journal</h2></div>
+              <span id="journal-count" class="journal-count">0 LOGGED</span>
+            </div>
+            <div class="learning-summary"><span class="learning-icon">↗</span><p id="learning-summary">No outcomes yet. Log a result to start calibrating the blend.</p></div>
+            <div id="journal-list" class="journal-list"></div>
+            <p class="local-storage-note">Journal and custom setups stay in this browser.</p>
+          </section>
+        </section>
+
+        <footer class="disclaimer"><span>GILL GOLD ANALYST <i>·</i> OFFLINE-FIRST</span><p>Analysis is educational and may be wrong. Sample candles are simulated. No live feed, execution, or financial advice.</p></footer>
+      </main>
+    </div>
+
+    <dialog id="strategy-dialog" class="dialog">
+      <form id="strategy-form" method="dialog">
+        <div class="dialog-heading"><div><p class="eyebrow">MODEL SETTINGS</p><h2>Add a strategy</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close dialog">×</button></div>
+        <label class="field-label" for="strategy-name">Strategy name</label>
+        <input id="strategy-name" name="name" maxlength="28" placeholder="e.g. London range break" required />
+        <label class="field-label" for="strategy-type">Signal family</label>
+        <select id="strategy-type" name="type"><option value="trend">Trend following · EMA structure</option><option value="momentum">Momentum breakout · range expansion</option><option value="mean">Mean reversion · RSI extremes</option><option value="liquidity">Liquidity sweep · wick rejection</option></select>
+        <p class="dialog-hint">Custom setups use the selected indicator family. Their weight adapts only from outcomes you log here.</p>
+        <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Add to blend</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="outcome-dialog" class="dialog">
+      <form id="outcome-form" method="dialog">
+        <div class="dialog-heading"><div><p class="eyebrow">MODEL FEEDBACK</p><h2>Record the outcome</h2></div><button class="icon-button close-dialog" type="button" aria-label="Close dialog">×</button></div>
+        <p id="outcome-prompt" class="dialog-hint">How did the latest signal perform?</p>
+        <fieldset class="outcome-options"><legend>Result</legend><label><input type="radio" name="result" value="win" checked /><span class="result-option"><b>✓</b> Favorable</span></label><label><input type="radio" name="result" value="loss" /><span class="result-option"><b>×</b> Unfavorable</span></label></fieldset>
+        <label class="field-label" for="outcome-note">Note <span>(optional)</span></label>
+        <input id="outcome-note" name="note" maxlength="70" placeholder="What did the market do?" />
+        <p class="dialog-hint">This updates the participating setups' relative weights. It does not retrain an AI model.</p>
+        <div class="dialog-actions"><button class="button button-secondary close-dialog" type="button">Cancel</button><button class="button button-primary" type="submit">Save outcome</button></div>
+      </form>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
