@@ -4,8 +4,8 @@
   "symbol": "XAUUSD",
   "description": "A trend-continuation setup that waits for a pullback and candle confirmation.",
   "image_reader": {
-    "method": "Detect green and red candle-color clusters from the chart image and estimate candle highs, lows, and closes in pixel space.",
-    "minimum_candles": 55,
+    "method": "Detect candle-color clusters from common cool/warm MT5 chart palettes and estimate candle highs, lows, and closes in pixel space. Cool hues are assumed bullish and warm hues bearish.",
+    "minimum_candles": 12,
     "price_ocr": false,
     "confidence_ceiling": "LOW"
   },
@@ -30,7 +30,7 @@
     "take_profit": "2R from entry."
   },
   "no_trade_when": [
-    "Fewer than 55 candle groups are detected.",
+    "Fewer than 12 candle groups are detected.",
     "Candle colors are not distinguishable in the screenshot.",
     "EMA trend, pullback, or confirmation conditions are not met.",
     "The required stop-risk condition fails."

@@ -42,35 +42,42 @@ function previewImage(file) {
   preview.onerror = () => { preview.hidden = true; };
 }
 
+function candleColorDirection(red, green, blue) {
+  const maximum = Math.max(red, green, blue);
+  const minimum = Math.min(red, green, blue);
+  const chroma = maximum - minimum;
+  if (maximum < 70 || chroma < 18) return 0;
+  let hue;
+  if (maximum === red) hue = 60 * (((green - blue) / chroma) % 6);
+  else if (maximum === green) hue = 60 * ((blue - red) / chroma + 2);
+  else hue = 60 * ((red - green) / chroma + 4);
+  if (hue < 0) hue += 360;
+  return hue >= 65 && hue < 260 ? 1 : -1;
+}
+
 function findColoredCandles(imageData, width, height) {
-  const columns = Array.from({ length: width }, () => ({ minY: height, maxY: -1, green: 0, red: 0 }));
+  const columns = Array.from({ length: width }, () => ({ minY: height, maxY: -1, bullish: 0, bearish: 0 }));
   const pixels = imageData.data;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const offset = (y * width + x) * 4;
-      const red = pixels[offset];
-      const green = pixels[offset + 1];
-      const blue = pixels[offset + 2];
-      if (green > 75 && green - red > 24 && green > red * 1.22 && green > blue * 0.8) {
-        columns[x].minY = Math.min(columns[x].minY, y);
-        columns[x].maxY = Math.max(columns[x].maxY, y);
-        columns[x].green += 1;
-      } else if (red > 85 && red - green > 24 && red > green * 1.22 && red > blue * 1.05) {
-        columns[x].minY = Math.min(columns[x].minY, y);
-        columns[x].maxY = Math.max(columns[x].maxY, y);
-        columns[x].red += 1;
-      }
+      const direction = candleColorDirection(pixels[offset], pixels[offset + 1], pixels[offset + 2]);
+      if (!direction) continue;
+      columns[x].minY = Math.min(columns[x].minY, y);
+      columns[x].maxY = Math.max(columns[x].maxY, y);
+      columns[x][direction > 0 ? "bullish" : "bearish"] += 1;
     }
   }
+
   const candles = [];
   let cluster = null;
   const finish = () => {
     if (!cluster) return;
     const span = cluster.last - cluster.first + 1;
     const pixelHeight = cluster.maxY - cluster.minY;
-    const total = cluster.green + cluster.red;
+    const total = cluster.bullish + cluster.bearish;
     if (span <= Math.max(18, width * 0.018) && pixelHeight >= 4 && total >= span * 2) {
-      const bullish = cluster.green > cluster.red;
+      const bullish = cluster.bullish > cluster.bearish;
       candles.push({
         high: height - cluster.minY,
         low: height - cluster.maxY,
@@ -81,18 +88,19 @@ function findColoredCandles(imageData, width, height) {
     }
     cluster = null;
   };
+
   columns.forEach((column, x) => {
-    if (!column.green && !column.red) {
+    if (!column.bullish && !column.bearish) {
       if (cluster && x - cluster.last > 2) finish();
       return;
     }
     if (cluster && x - cluster.last > 2) finish();
-    if (!cluster) cluster = { first: x, last: x, minY: height, maxY: 0, green: 0, red: 0 };
+    if (!cluster) cluster = { first: x, last: x, minY: height, maxY: 0, bullish: 0, bearish: 0 };
     cluster.last = x;
     cluster.minY = Math.min(cluster.minY, column.minY);
     cluster.maxY = Math.max(cluster.maxY, column.maxY);
-    cluster.green += column.green;
-    cluster.red += column.red;
+    cluster.bullish += column.bullish;
+    cluster.bearish += column.bearish;
   });
   finish();
   return candles.slice(-180);
@@ -120,7 +128,7 @@ function analyzeCandles(candles, skill) {
     return {
       direction: "WAIT",
       confidence: "LOW · LOCAL IMAGE READ",
-      visualSummary: `Only ${candles.length} colored candle groups were detected; ${skill.image_reader.minimum_candles} are needed for the EMA20/50 filter. Try a clearer MT5 chart image.`,
+      visualSummary: `Detected ${candles.length} candle groups. At least ${skill.image_reader.minimum_candles} are needed to attempt the local EMA20/50 interpretation. The uploaded image was still scanned, but there is too little candle history to apply the strategy.`,
       currentPrice: null,
       entry: "Not readable from image",
       stopLoss: "Not readable from image",
