@@ -1,6 +1,16 @@
 const $ = (selector) => document.querySelector(selector);
 const SKILL_URL = new URL("./skills/gold-ema-pullback.json", document.baseURI);
-let currentImage = null;
+const TIMEFRAMES = [
+  { id: "MN1", label: "Monthly", role: "Major trend", weight: 5, group: "HIGHER" },
+  { id: "W1", label: "Weekly", role: "Major structure", weight: 4, group: "HIGHER" },
+  { id: "D1", label: "Daily", role: "Swing bias", weight: 3, group: "HIGHER" },
+  { id: "H4", label: "4 Hour", role: "Trend context", weight: 2, group: "HIGHER" },
+  { id: "H1", label: "1 Hour", role: "Session context", weight: 1, group: "HIGHER" },
+  { id: "M15", label: "15 Minute", role: "Setup", weight: 0, group: "ENTRY" },
+  { id: "M5", label: "5 Minute", role: "Confirmation", weight: 0, group: "ENTRY" },
+  { id: "M1", label: "1 Minute", role: "Precision", weight: 0, group: "ENTRY" },
+];
+const timeframeState = new Map(TIMEFRAMES.map((frame) => [frame.id, { frame, file: null, image: null, candles: [], result: null }]));
 let strategySkill = null;
 
 async function loadStrategySkill() {
@@ -27,16 +37,17 @@ function escapeHtml(text) {
 }
 
 function setStatus(message) {
-  $("#analysis-status").textContent = message;
+  $("#session-summary").textContent = message;
 }
 
-function previewImage(file) {
-  $("#selected-image").hidden = false;
-  $("#image-name").textContent = file.name || "Chart image";
-  $("#image-size").textContent = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
-  const canvas = $("#image-preview");
-  canvas.width = 0;
-  canvas.height = 0;
+function renderTimeframeSlots() {
+  $("#timeframe-slots").innerHTML = TIMEFRAMES.map((frame) => `
+    <article class="timeframe-slot" data-slot="${frame.id}">
+      <header class="slot-heading"><div><span class="timeframe-code">${frame.id}</span><div><h3>${frame.label}</h3><small>${frame.role}</small></div></div><span class="slot-group">${frame.group}</span></header>
+      <label class="slot-upload" for="file-${frame.id}"><input id="file-${frame.id}" data-timeframe="${frame.id}" type="file" accept="image/*" capture="environment" /><span>＋</span><strong>Upload / take photo</strong></label>
+      <canvas id="canvas-${frame.id}" class="slot-canvas" aria-label="${frame.label} MT5 chart with local conditional levels" hidden></canvas>
+      <p id="status-${frame.id}" class="slot-status">Waiting for image</p>
+    </article>`).join("");
 }
 
 function candleColorDirection(red, green, blue) {
@@ -219,6 +230,11 @@ function analyzeCandles(candles, skill, canvasWidth) {
       confidence: "LOW · LOCAL PIXEL READ",
       visualSummary: `Detected ${candles.length} candle groups; ${skill.image_reader.minimum_candles} are needed for structure and zone checks. The uploaded image was still scanned.`,
       currentPrice: null,
+      emaDirection: "neutral",
+      structureDirection: "neutral",
+      candlesDetected: candles.length,
+      emaDirection: "neutral",
+      structureDirection: "neutral",
       entry: overlays.length ? "Conditional long and short swing scenarios" : "No candle locations detected",
       stopLoss: overlays.length ? "Conditional stops beyond recent swings" : "No candle locations detected",
       takeProfit: overlays.length ? "Conditional 2.5R projections" : "No candle locations detected",
@@ -283,6 +299,11 @@ function analyzeCandles(candles, skill, canvasWidth) {
     confidence: "LOW · LOCAL PIXEL READ",
     visualSummary: `${count} candle groups scanned. ${checks}`,
     currentPrice: null,
+    emaDirection,
+    structureDirection: structure.direction,
+    candlesDetected: count,
+    emaDirection,
+    structureDirection: structure.direction,
     entry: primaryPlan ? `${primaryPlan.conditional ? "Conditional " : "Active setup · "}${primaryPlan.zone.fallback ? "swing-area" : "zone"} retest` : "No swing location detected",
     stopLoss: primaryPlan ? `Beyond ${primaryPlan.zone.fallback ? "swing area" : primaryPlan.direction === "long" ? "demand" : "supply"} zone` : "No swing location detected",
     takeProfit: primaryPlan ? `${primaryPlan.targetIsProjected ? "Projected " : "Recent swing · "}2.5R` : "No swing target detected",
@@ -326,19 +347,6 @@ function drawPlanOverlays(context, width, height, result) {
   context.restore();
 }
 
-function showResult(result) {
-  $("#result-direction").textContent = result.direction;
-  $("#result-direction").className = `result-direction ${result.direction.startsWith("LONG") ? "long" : result.direction.startsWith("SHORT") ? "short" : "wait"}`;
-  $("#result-confidence").textContent = result.confidence;
-  $("#result-summary").textContent = result.visualSummary;
-  $("#result-price").textContent = "Not OCR'd locally";
-  $("#result-entry").textContent = result.entry;
-  $("#result-stop").textContent = result.stopLoss;
-  $("#result-target").textContent = result.takeProfit;
-  $("#result-caveats").textContent = result.caveats.join(" ");
-  $("#analysis-result").hidden = false;
-}
-
 function decodeImage(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -349,9 +357,8 @@ function decodeImage(file) {
   });
 }
 
-function drawImageToCanvas(image) {
+function drawImageToCanvas(image, canvas) {
   const scale = Math.min(1, 1800 / image.width, 1400 / image.height);
-  const canvas = $("#image-preview");
   canvas.width = Math.max(1, Math.round(image.width * scale));
   canvas.height = Math.max(1, Math.round(image.height * scale));
   const context = canvas.getContext("2d", { willReadFrequently: true });
@@ -359,86 +366,113 @@ function drawImageToCanvas(image) {
   return { canvas, context };
 }
 
-function displayImage(file) {
-  previewImage(file);
+function updateSlotStatus(frame, message) {
+  $(`#status-${frame}`).textContent = message;
 }
 
-async function analyzeImage(file) {
-  currentImage = file;
-  displayImage(file);
-  $("#analysis-result").hidden = true;
-  $("#retry-analysis").hidden = true;
-  $("#upload-dropzone").classList.add("busy");
-  $("#analysis-status").textContent = "Loading local strategy file and reading image pixels…";
+async function analyzeTimeframe(frameId, file) {
+  const slot = timeframeState.get(frameId);
+  slot.file = file;
+  slot.result = null;
+  slot.candles = [];
+  slot.image = null;
+  const canvas = $(`#canvas-${frameId}`);
+  canvas.hidden = false;
+  canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+  updateSlotStatus(frameId, "Reading screenshot locally…");
+  $("#session-summary").textContent = `Updating ${frameId}; all other timeframe images are being kept.`;
   try {
     if (!strategySkill) throw new Error("The local strategy file did not load. Check the skills folder.");
     const image = await decodeImage(file);
-    const { canvas, context } = drawImageToCanvas(image);
+    slot.image = image;
+    const { context } = drawImageToCanvas(image, canvas);
     const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-    const candles = findColoredCandles(imageData, canvas.width, canvas.height);
-    const result = analyzeCandles(candles, strategySkill, canvas.width);
-    drawPlanOverlays(context, canvas.width, canvas.height, result);
-    showResult(result);
-    $("#analysis-status").textContent = "Local strategy interpretation complete. No image or API request was sent.";
+    slot.candles = findColoredCandles(imageData, canvas.width, canvas.height);
+    slot.result = analyzeCandles(slot.candles, strategySkill, canvas.width);
+    updateSlotStatus(frameId, `${slot.candles.length} candles · EMA ${slot.result.emaDirection} · structure ${slot.result.structureDirection} · ${slot.result.direction}`);
+    renderSession();
   } catch (error) {
-    $("#analysis-status").textContent = error.message || "Could not analyze this image locally.";
-    $("#retry-analysis").hidden = false;
-  } finally {
-    $("#upload-dropzone").classList.remove("busy");
+    slot.image = null;
+    updateSlotStatus(frameId, error.message || "Could not read this image locally.");
+    renderSession();
   }
 }
 
-function handleFiles(files) {
-  const file = files?.[0];
-  if (file) analyzeImage(file);
+function renderSession() {
+  const loaded = TIMEFRAMES.map((frame) => ({ frame, slot: timeframeState.get(frame.id) })).filter(({ slot }) => slot.result);
+  const higher = loaded.filter(({ frame }) => frame.group === "HIGHER");
+  const lower = loaded.filter(({ frame }) => frame.group === "ENTRY");
+  const votes = higher.filter(({ slot }) => slot.result.emaDirection !== "neutral" && slot.result.emaDirection === slot.result.structureDirection);
+  const longWeight = votes.filter(({ slot }) => slot.result.emaDirection === "long").reduce((sum, { frame }) => sum + frame.weight, 0);
+  const shortWeight = votes.filter(({ slot }) => slot.result.emaDirection === "short").reduce((sum, { frame }) => sum + frame.weight, 0);
+  const bias = longWeight > shortWeight ? "long" : shortWeight > longWeight ? "short" : "neutral";
+  const matching = lower.filter(({ slot }) => slot.result.direction.startsWith(bias.toUpperCase()) && bias !== "neutral");
+  const opposing = lower.filter(({ slot }) => slot.result.direction.startsWith(bias === "long" ? "SHORT" : "LONG") && bias !== "neutral");
+  let stateText = "WAITING FOR CHARTS";
+  let summary = "Upload higher-timeframe charts to establish context, then M15/M5/M1 for entry confirmation.";
+  if (!higher.length) {
+    stateText = "ADD HIGHER TIMEFRAMES";
+  } else if (!votes.length || bias === "neutral") {
+    stateText = "WAIT · HTF STRUCTURE UNCLEAR";
+    summary = `Loaded ${higher.length} higher-timeframe chart(s), but their EMA and valid-swing biases do not agree.`;
+  } else if (opposing.length) {
+    stateText = "WAIT · LOWER-TF CONFLICT";
+    summary = `${bias.toUpperCase()} higher-timeframe bias conflicts with ${opposing.map(({ frame }) => frame.id).join(", ")} setup(s).`;
+  } else if (matching.length) {
+    stateText = `${bias.toUpperCase()} · ${matching.map(({ frame }) => frame.id).join(" / ")} CONFIRM`;
+    summary = `${bias.toUpperCase()} higher-timeframe bias is confirmed by ${matching.map(({ frame }) => frame.id).join(", ")}. Verify the conditional levels on those images.`;
+  } else {
+    stateText = `${bias.toUpperCase()} BIAS · WAIT FOR ENTRY`;
+    summary = `Higher timeframes lean ${bias.toUpperCase()}; waiting for an aligned M15, M5, or M1 setup.`;
+  }
+  $("#session-bias").textContent = stateText;
+  $("#session-summary").textContent = `${summary} Higher frames: ${longWeight} long weight / ${shortWeight} short weight.`;
+  $("#session-trades").innerHTML = loaded.map(({ frame, slot }) => `<div class="session-row"><strong>${frame.id}</strong><span>${slot.result.direction}</span><small>${slot.result.candlesDetected} candles · EMA ${slot.result.emaDirection} · structure ${slot.result.structureDirection}</small></div>`).join("") || "";
+  for (const { frame, slot } of loaded) {
+    const canvas = $(`#canvas-${frame.id}`);
+    const context = canvas.getContext("2d");
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(slot.image, 0, 0, canvas.width, canvas.height);
+    const aligned = matching.some((item) => item.frame.id === frame.id);
+    const result = { ...slot.result, direction: aligned ? slot.result.direction : "WAIT" };
+    drawPlanOverlays(context, canvas.width, canvas.height, result);
+  }
 }
 
 function start() {
-  fetch(SKILL_URL)
-    .then((response) => {
-      if (!response.ok) throw new Error("Could not load local strategy rules.");
-      return response.json();
-    })
-    .then((skill) => {
-      strategySkill = skill;
-      const rules = [
-        ["LONG", `${skill.trend_filter.long}; ${skill.long_setup.pullback} ${skill.long_setup.confirmation} Entry ${skill.long_setup.entry}`],
-        ["SHORT", `${skill.trend_filter.short}; ${skill.short_setup.pullback} ${skill.short_setup.confirmation} Entry ${skill.short_setup.entry}`],
-        ["STOP", skill.long_setup.stop_loss],
-        ["TARGET", skill.long_setup.take_profit],
-      ];
-      $("#strategy-title").textContent = skill.name;
-      $("#skill-status").textContent = "RULES LOADED";
-      $("#skill-rules").innerHTML = rules.map(([label, text]) => `<p><b>${escapeHtml(label)}</b> ${escapeHtml(text)}</p>`).join("");
-      $("#skill-description").textContent = `${skill.description} ${skill.performance_note}`;
-      $("#skill-sources").innerHTML = skill.references.map((source) => `<a href="${escapeHtml(source.url)}" target="_blank" rel="noreferrer">${escapeHtml(source.title)}</a>`).join(" · ");
-    })
-    .catch((error) => {
-      $("#skill-status").textContent = "RULES NOT LOADED";
-      $("#analysis-status").textContent = error.message;
-    });
-}
-
-$("#chart-file").addEventListener("change", (event) => {
-  handleFiles(event.target.files);
-  event.target.value = "";
-});
-$("#retry-analysis").addEventListener("click", () => {
-  if (currentImage) analyzeImage(currentImage);
-});
-
-const dropzone = $("#upload-dropzone");
-for (const eventName of ["dragenter", "dragover"]) {
-  dropzone.addEventListener(eventName, (event) => {
+  renderTimeframeSlots();
+  loadStrategySkill().then(renderSession).catch((error) => {
+    $("#skill-status").textContent = "RULES NOT LOADED";
+    $("#session-summary").textContent = error.message;
+  });
+  $("#timeframe-slots").addEventListener("change", (event) => {
+    const frameId = event.target.dataset.timeframe;
+    if (frameId && event.target.files?.[0]) analyzeTimeframe(frameId, event.target.files[0]);
+    if (event.target.type === "file") event.target.value = "";
+  });
+  $("#timeframe-slots").addEventListener("dragover", (event) => {
+    if (event.target.closest(".timeframe-slot")) event.preventDefault();
+  });
+  $("#timeframe-slots").addEventListener("drop", (event) => {
+    const slot = event.target.closest("[data-slot]");
+    if (!slot) return;
     event.preventDefault();
-    dropzone.classList.add("dragging");
+    const file = event.dataTransfer.files[0];
+    if (file) analyzeTimeframe(slot.dataset.slot, file);
+  });
+  $("#new-session").addEventListener("click", () => {
+    for (const frame of TIMEFRAMES) {
+      timeframeState.set(frame.id, { frame, file: null, image: null, candles: [], result: null });
+      $(`#canvas-${frame.id}`).hidden = true;
+      $(`#canvas-${frame.id}`).width = 0;
+      $(`#canvas-${frame.id}`).height = 0;
+      updateSlotStatus(frame.id, "Waiting for image");
+      $(`#file-${frame.id}`).value = "";
+    }
+    renderSession();
+    $("#session-bias").textContent = "NEW SESSION";
+    $("#session-summary").textContent = "Upload upper timeframes first; lower-timeframe replacements will keep these charts.";
   });
 }
-dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragging"));
-dropzone.addEventListener("drop", (event) => {
-  event.preventDefault();
-  dropzone.classList.remove("dragging");
-  handleFiles(event.dataTransfer.files);
-});
 
 start();

@@ -22,7 +22,7 @@
         <section class="intro">
           <p class="eyebrow">XAU / USD · METATRADER 5</p>
           <h1>One setup.<br /><span>Clear rules.</span></h1>
-          <p class="subhead">Upload an MT5 screenshot or take a photo. The saved strategy rules and image scan run on this device.</p>
+          <p class="subhead">Upload monthly-to-one-minute MT5 screenshots. Update lower timeframes as they change; the higher-timeframe context stays in this session.</p>
         </section>
 
         <section class="strategy-card" aria-labelledby="strategy-title">
@@ -32,37 +32,20 @@
           <div id="skill-sources" class="skill-sources"></div>
         </section>
 
-        <section id="upload-panel" class="upload-panel" aria-labelledby="upload-title">
-          <input id="chart-file" type="file" accept="image/*" capture="environment" />
-          <label id="upload-dropzone" class="upload-dropzone" for="chart-file">
-            <span class="upload-icon" aria-hidden="true">↑</span>
-            <strong id="upload-title">Choose chart image or take photo</strong>
-            <span id="upload-hint">Image analysis runs locally using the saved rulebook. No AI service or API key.</span>
-            <span class="button-label">Choose image</span>
-          </label>
-          <div id="selected-image" class="selected-image" hidden>
-            <canvas id="image-preview" aria-label="MT5 screenshot with local entry, stop, target, and zone overlays"></canvas>
-            <div class="selected-image-meta"><span id="image-name"></span><span id="image-size"></span></div>
+        <section class="multi-session" aria-labelledby="timeframe-title">
+          <div class="session-heading">
+            <div><p class="eyebrow">TIMEFRAME SET</p><h2 id="timeframe-title">Chart screenshots</h2></div>
+            <button id="new-session" class="session-reset" type="button">New session</button>
           </div>
-          <div id="analysis-status" class="analysis-status" role="status" aria-live="polite">Select an image to start.</div>
-          <button id="retry-analysis" class="retry-button" type="button" hidden>Try again</button>
+          <p class="session-note">Upload each timeframe once. Replacing M15, M5, or M1 does not clear the higher-timeframe images.</p>
+          <div id="timeframe-slots" class="timeframe-slots"></div>
         </section>
 
-        <section id="analysis-result" class="analysis-result" aria-labelledby="result-title" hidden>
-          <div class="result-heading">
-            <div><p class="eyebrow">CHART READ</p><h2 id="result-title">Trade setup</h2></div>
-            <span id="result-confidence" class="confidence">—</span>
-          </div>
-          <div id="result-direction" class="result-direction">—</div>
-          <p id="result-summary" class="result-summary"></p>
-          <dl class="levels-grid">
-            <div><dt>Visible price</dt><dd id="result-price">Not clear</dd></div>
-            <div><dt>Entry</dt><dd id="result-entry">Not clear</dd></div>
-            <div><dt>Stop-loss</dt><dd id="result-stop">Not clear</dd></div>
-            <div><dt>Take-profit</dt><dd id="result-target">Not clear</dd></div>
-          </dl>
-          <p id="result-caveats" class="result-caveats"></p>
-          <p class="risk-note">This local reader estimates candle shapes from screenshot pixels. It does not OCR exact prices. Verify the setup and calculate prices in MT5 before trading.</p>
+        <section class="session-readout" aria-labelledby="session-readout-title">
+          <div class="result-heading"><div><p class="eyebrow">COMBINED READ</p><h2 id="session-readout-title">Multi-timeframe interpretation</h2></div><span id="session-bias" class="confidence session-bias">WAITING</span></div>
+          <p id="session-summary" class="session-summary">Upload monthly-to-hourly context and a lower-timeframe chart to start the session read.</p>
+          <div id="session-trades" class="session-trades"></div>
+          <p class="risk-note">Dashed levels are conditional scenarios while WAIT is shown. Local pixel analysis does not read exact price labels; verify prices in MT5.</p>
         </section>
 
         <footer><span>IMAGE + RULEBOOK STAY ON THIS DEVICE</span><span>NO API · NO TRADE IS PLACED</span></footer>
