@@ -43,6 +43,10 @@
 
         <section class="session-readout" aria-labelledby="session-readout-title">
           <div class="result-heading"><div><p class="eyebrow">COMBINED READ</p><h2 id="session-readout-title">Multi-timeframe interpretation</h2></div><span id="session-bias" class="confidence session-bias">WAITING</span></div>
+          <div class="interpretation-controls">
+            <label for="interpret-timeframe">Interpret setup on<select id="interpret-timeframe"><option value="AUTO">Auto suggestion</option><option value="MN1">MN1 · Monthly</option><option value="W1">W1 · Weekly</option><option value="D1">D1 · Daily</option><option value="H4">H4 · 4 Hour</option><option value="H1">H1 · 1 Hour</option><option value="M15">M15 · 15 Minute</option><option value="M5">M5 · 5 Minute</option><option value="M1">M1 · 1 Minute</option></select></label>
+            <span id="suggested-timeframe" class="suggested-timeframe">Suggested: M15</span>
+          </div>
           <p id="session-summary" class="session-summary">Upload monthly-to-hourly context and a lower-timeframe chart to start the session read.</p>
           <div id="session-trades" class="session-trades"></div>
           <p class="risk-note">Dashed levels are conditional scenarios while WAIT is shown. Local pixel analysis does not read exact price labels; verify prices in MT5.</p>

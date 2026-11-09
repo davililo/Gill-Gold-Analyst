@@ -400,41 +400,60 @@ async function analyzeTimeframe(frameId, file) {
 
 function renderSession() {
   const loaded = TIMEFRAMES.map((frame) => ({ frame, slot: timeframeState.get(frame.id) })).filter(({ slot }) => slot.result);
-  const higher = loaded.filter(({ frame }) => frame.group === "HIGHER");
-  const lower = loaded.filter(({ frame }) => frame.group === "ENTRY");
-  const votes = higher.filter(({ slot }) => slot.result.emaDirection !== "neutral" && slot.result.emaDirection === slot.result.structureDirection);
-  const longWeight = votes.filter(({ slot }) => slot.result.emaDirection === "long").reduce((sum, { frame }) => sum + frame.weight, 0);
-  const shortWeight = votes.filter(({ slot }) => slot.result.emaDirection === "short").reduce((sum, { frame }) => sum + frame.weight, 0);
-  const bias = longWeight > shortWeight ? "long" : shortWeight > longWeight ? "short" : "neutral";
-  const matching = lower.filter(({ slot }) => slot.result.direction.startsWith(bias.toUpperCase()) && bias !== "neutral");
-  const opposing = lower.filter(({ slot }) => slot.result.direction.startsWith(bias === "long" ? "SHORT" : "LONG") && bias !== "neutral");
+  const uploadedEntryFrames = ["M15", "M5", "M1"].map((id) => timeframeState.get(id)).filter((slot) => slot.result);
+  const higherVotes = loaded.filter(({ frame, slot }) => frame.group === "HIGHER" && slot.result.emaDirection !== "neutral" && slot.result.emaDirection === slot.result.structureDirection);
+  const higherLongWeight = higherVotes.reduce((sum, { frame, slot }) => sum + (slot.result.emaDirection === "long" ? frame.weight : 0), 0);
+  const higherShortWeight = higherVotes.reduce((sum, { frame, slot }) => sum + (slot.result.emaDirection === "short" ? frame.weight : 0), 0);
+  const higherBias = higherLongWeight > higherShortWeight ? "long" : higherShortWeight > higherLongWeight ? "short" : "neutral";
+  const entryCandidates = uploadedEntryFrames.filter((slot) => slot.result.direction.startsWith("LONG") || slot.result.direction.startsWith("SHORT"));
+  const matchingEntry = entryCandidates.find((slot) => slot.result.direction.startsWith(higherBias.toUpperCase()) && higherBias !== "neutral");
+  const suggested = matchingEntry?.frame.id || entryCandidates[0]?.frame.id || uploadedEntryFrames[0]?.frame.id || "M15";
+  const suggestedLabel = matchingEntry ? `Suggested: ${suggested} · aligned` : `Suggested: ${suggested} · await setup`;
+  $("#suggested-timeframe").textContent = suggestedLabel;
+  const selectedId = $("#interpret-timeframe").value === "AUTO" ? suggested : $("#interpret-timeframe").value;
+  const selectedFrame = TIMEFRAMES.find((frame) => frame.id === selectedId);
+  document.querySelectorAll(".timeframe-slot").forEach((slot) => slot.classList.toggle("selected", slot.dataset.slot === selectedId));
+  const selectedSlot = timeframeState.get(selectedId);
+  const selectedResult = selectedSlot.result;
+  let contextVotes = loaded.filter(({ frame }) => frame.id !== selectedId && frame.weight > selectedFrame.weight);
+  if (!contextVotes.length) contextVotes = loaded.filter(({ frame }) => frame.id !== selectedId);
+  const contextLongWeight = contextVotes.reduce((sum, { frame, slot }) => sum + (slot.result.emaDirection === "long" && slot.result.emaDirection === slot.result.structureDirection ? Math.max(frame.weight, 1) : 0), 0);
+  const contextShortWeight = contextVotes.reduce((sum, { frame, slot }) => sum + (slot.result.emaDirection === "short" && slot.result.emaDirection === slot.result.structureDirection ? Math.max(frame.weight, 1) : 0), 0);
+  const contextBias = contextLongWeight > contextShortWeight ? "long" : contextShortWeight > contextLongWeight ? "short" : "neutral";
+  const selectedDirection = selectedResult?.direction.startsWith("LONG") ? "long" : selectedResult?.direction.startsWith("SHORT") ? "short" : "neutral";
+  const peers = loaded.filter(({ frame }) => frame.id !== selectedId);
+  const peerConflicts = selectedDirection !== "neutral" && peers.filter(({ slot }) => slot.result.direction.startsWith(selectedDirection === "long" ? "SHORT" : "LONG"));
   let stateText = "WAITING FOR CHARTS";
-  let summary = "Upload higher-timeframe charts to establish context, then M15/M5/M1 for entry confirmation.";
-  if (!higher.length) {
-    stateText = "ADD HIGHER TIMEFRAMES";
-  } else if (!votes.length || bias === "neutral") {
-    stateText = "WAIT · HTF STRUCTURE UNCLEAR";
-    summary = `Loaded ${higher.length} higher-timeframe chart(s), but their EMA and valid-swing biases do not agree.`;
-  } else if (opposing.length) {
-    stateText = "WAIT · LOWER-TF CONFLICT";
-    summary = `${bias.toUpperCase()} higher-timeframe bias conflicts with ${opposing.map(({ frame }) => frame.id).join(", ")} setup(s).`;
-  } else if (matching.length) {
-    stateText = `${bias.toUpperCase()} · ${matching.map(({ frame }) => frame.id).join(" / ")} CONFIRM`;
-    summary = `${bias.toUpperCase()} higher-timeframe bias is confirmed by ${matching.map(({ frame }) => frame.id).join(", ")}. Verify the conditional levels on those images.`;
+  let summary = "Upload higher-timeframe context and a setup timeframe. Select the timeframe to interpret, or leave Auto suggestion on.";
+  if (!selectedResult) {
+    stateText = `WAIT · UPLOAD ${selectedId}`;
+    summary = `The suggested interpretation timeframe is ${suggested}, but that slot has no image yet.`;
+  } else if (selectedDirection === "neutral") {
+    stateText = `WAIT · ${selectedId} HAS NO SETUP`;
+    summary = `${selectedId} does not currently have a local long/short candidate.`;
+  } else if (contextBias === "neutral") {
+    stateText = "WAIT · CONTEXT CONFLICT";
+    summary = `The ${selectedId} ${selectedDirection.toUpperCase()} candidate has no agreed EMA/structure bias across the other uploaded timeframes.`;
+  } else if (selectedDirection !== contextBias) {
+    stateText = "WAIT · SELECTED FRAME DISAGREES";
+    summary = `${selectedId} suggests ${selectedDirection.toUpperCase()}, while other timeframes lean ${contextBias.toUpperCase()}.`;
+  } else if (peerConflicts.length) {
+    stateText = "WAIT · TIMEFRAME CONFLICT";
+    summary = `${selectedId} and higher-timeframe context lean ${selectedDirection.toUpperCase()}, but ${peerConflicts.map(({ frame }) => frame.id).join(", ")} conflict.`;
   } else {
-    stateText = `${bias.toUpperCase()} BIAS · WAIT FOR ENTRY`;
-    summary = `Higher timeframes lean ${bias.toUpperCase()}; waiting for an aligned M15, M5, or M1 setup.`;
+    stateText = `${selectedDirection.toUpperCase()} · ${selectedId} IN CONTEXT`;
+    summary = `${selectedId} candidate agrees with the other uploaded timeframes. Review the marked levels before acting.`;
   }
   $("#session-bias").textContent = stateText;
-  $("#session-summary").textContent = `${summary} Higher frames: ${longWeight} long weight / ${shortWeight} short weight.`;
-  $("#session-trades").innerHTML = loaded.map(({ frame, slot }) => `<div class="session-row"><strong>${frame.id}</strong><span>${slot.result.direction}</span><small>${slot.result.candlesDetected} candles · EMA ${slot.result.emaDirection} · structure ${slot.result.structureDirection}</small></div>`).join("") || "";
+  $("#session-summary").textContent = `${summary} Selected ${selectedId}; peer context weight ${contextLongWeight} long / ${contextShortWeight} short. Suggested: ${suggested}.`;
+  $("#session-trades").innerHTML = loaded.map(({ frame, slot }) => `<div class="session-row ${frame.id === selectedId ? "selected" : ""}"><strong>${frame.id}</strong><span>${slot.result.direction}</span><small>${slot.result.candlesDetected} candles · EMA ${slot.result.emaDirection} · structure ${slot.result.structureDirection}</small></div>`).join("") || "";
   for (const { frame, slot } of loaded) {
     const canvas = $(`#canvas-${frame.id}`);
     const context = canvas.getContext("2d");
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.drawImage(slot.image, 0, 0, canvas.width, canvas.height);
-    const aligned = matching.some((item) => item.frame.id === frame.id);
-    const result = { ...slot.result, direction: aligned ? slot.result.direction : "WAIT" };
+    const active = frame.id === selectedId && stateText.startsWith(selectedDirection.toUpperCase()) && stateText.includes("IN CONTEXT");
+    const result = { ...slot.result, direction: active ? slot.result.direction : "WAIT" };
     drawPlanOverlays(context, canvas.width, canvas.height, result);
   }
 }
@@ -450,6 +469,7 @@ function start() {
     if (frameId && event.target.files?.[0]) analyzeTimeframe(frameId, event.target.files[0]);
     if (event.target.type === "file") event.target.value = "";
   });
+  $("#interpret-timeframe").addEventListener("change", renderSession);
   $("#timeframe-slots").addEventListener("dragover", (event) => {
     if (event.target.closest(".timeframe-slot")) event.preventDefault();
   });
@@ -461,6 +481,7 @@ function start() {
     if (file) analyzeTimeframe(slot.dataset.slot, file);
   });
   $("#new-session").addEventListener("click", () => {
+    $("#interpret-timeframe").value = "AUTO";
     for (const frame of TIMEFRAMES) {
       timeframeState.set(frame.id, { frame, file: null, image: null, candles: [], result: null });
       $(`#canvas-${frame.id}`).hidden = true;
