@@ -12,10 +12,10 @@ Open http://localhost:4173. No install or build step is required.
 
 ## Local knowledge
 
-The first saved rule is `skills/gold-ema-pullback.json`. The page loads this file and uses its EMA20/EMA50 trend filter, pullback, candle confirmation, ATR stop-risk limit, and 2R target rule to interpret uploaded chart screenshots. Add future knowledge as versioned rule files and connect them to the local interpreter.
+The saved rulebook is `skills/gold-ema-pullback.json`. It combines the original EMA20/EMA50 pullback with valid swing structure, supply/demand zones, swing-based stops, and the new 2.5R minimum-reward filter. The composite only reports LONG/SHORT when both components agree. Add future strategies to this file and the local interpreter.
 
 ## First strategy
 
-Gold EMA Pullback returns a candidate only when the local pixel scan detects enough colored candles and the trend, pullback, confirmation, and stop rules pass. Otherwise it returns WAIT. Its research basis and references are in the JSON file.
+The combined strategy returns a candidate only when detected trend, valid structure, zone retest, candle confirmation, stop, and reward/risk rules agree. Otherwise it returns WAIT. On WAIT, the image can still show dashed, conditional entry/SL/TP scenarios based on detected swing areas; these are not active trade signals. Its research references are in the JSON file.
 
 The reader does not OCR price-axis labels or compute dollar-denominated entry/stop/target values. It reports relative candle-based locations only; verify and calculate exact levels in MT5. The rule is a starting hypothesis, not a proven profitable system.

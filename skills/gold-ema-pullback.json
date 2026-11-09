@@ -29,6 +29,38 @@
     "stop_loss": "Above the pullback swing high. Skip when risk is greater than 1.5 ATR(14).",
     "take_profit": "2R from entry."
   },
+  "components": [
+    {
+      "id": "ema-pullback",
+      "name": "Gold EMA Pullback",
+      "role": "Trend and pullback confirmation",
+      "rules": "EMA20/EMA50 direction, pullback to EMA20, and confirming candle break."
+    },
+    {
+      "id": "valid-structure-zones",
+      "name": "Valid Structure + Supply/Demand",
+      "role": "Bias, zone, and target filter",
+      "market_structure": {
+        "uptrend": "Higher highs and higher lows. A pullback low becomes valid only after price subsequently breaks the previous swing high.",
+        "downtrend": "Lower lows and lower highs. A pullback high becomes valid only after price subsequently breaks the previous swing low.",
+        "bias_invalidation": "An uptrend bias is invalidated only by a close below the last valid low; a downtrend bias is invalidated only by a close above the last valid high."
+      },
+      "demand_zone": "The full high-low range of the last base candle before a strong upward displacement in an uptrend.",
+      "supply_zone": "The full high-low range of the last base candle before a strong downward displacement in a downtrend.",
+      "entry": "Wait for price to return to the matching zone; require the EMA component's candle confirmation before entry.",
+      "stop_loss": "Beyond the far edge of the supply/demand zone.",
+      "take_profit": "Most recent swing high for longs or swing low for shorts; reject if reward is less than 2.5 times risk."
+    }
+  ],
+  "combination": {
+    "name": "Gold Valid-Structure Zone Pullback",
+    "maximum_stop_atr": 1.5,
+    "minimum_reward_risk": 2.5,
+    "long": "EMA trend is bullish AND valid structure is bullish AND price retests demand AND bullish candle confirmation passes.",
+    "short": "EMA trend is bearish AND valid structure is bearish AND price retests supply AND bearish candle confirmation passes.",
+    "conflict": "If components disagree, a valid swing is not established, a zone cannot be identified, or the 2.5R filter fails, return WAIT.",
+    "waiting_overlay": "When direction or zone is uncertain, draw clearly labeled conditional long/short levels from the latest visible swing areas; never present them as active orders."
+  },
   "no_trade_when": [
     "Fewer than 12 candle groups are detected.",
     "Candle colors are not distinguishable in the screenshot.",

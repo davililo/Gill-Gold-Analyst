@@ -58,7 +58,7 @@ h1 span { color: var(--green); }
 .upload-dropzone > span:not(.upload-icon) { color: var(--muted); font-size: 10px; }
 .button-label { padding: 7px 11px; border: 1px solid #62784a; color: var(--green); font-size: 10px; }
 .selected-image { margin-top: 13px; padding: 10px; border: 1px solid var(--border); background: #101513; }
-#image-preview { display: block; width: 100%; max-height: 360px; object-fit: contain; background: #090c0a; }
+#image-preview { display: block; width: 100%; height: auto; max-height: min(60vh, 540px); object-fit: contain; background: #090c0a; }
 .selected-image-meta { display: flex; justify-content: space-between; gap: 12px; padding-top: 8px; color: var(--muted); font: 9px var(--mono); overflow-wrap: anywhere; }
 #image-name { min-width: 0; }
 #image-size { flex: 0 0 auto; }

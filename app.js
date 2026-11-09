@@ -1,25 +1,25 @@
 const $ = (selector) => document.querySelector(selector);
 const SKILL_URL = new URL("./skills/gold-ema-pullback.json", document.baseURI);
 let currentImage = null;
-let previewUrl = null;
 let strategySkill = null;
 
 async function loadStrategySkill() {
   const response = await fetch(SKILL_URL);
   if (!response.ok) throw new Error("Could not load the saved strategy file.");
   strategySkill = await response.json();
-  $("#strategy-title").textContent = strategySkill.name;
-  $("#skill-status").textContent = "RULES LOADED";
+  $("#strategy-title").textContent = strategySkill.combination.name;
+  $("#skill-status").textContent = `${strategySkill.components.length} RULES LOADED`;
+  const structure = strategySkill.components.find((component) => component.id === "valid-structure-zones");
   const rules = [
-    ["LONG", `${strategySkill.trend_filter.long}; ${strategySkill.long_setup.pullback} ${strategySkill.long_setup.confirmation} Entry ${strategySkill.long_setup.entry}`],
-    ["SHORT", `${strategySkill.trend_filter.short}; ${strategySkill.short_setup.pullback} ${strategySkill.short_setup.confirmation} Entry ${strategySkill.short_setup.entry}`],
-    ["STOP", `${strategySkill.long_setup.stop_loss} The short-side rule is inverse.`],
-    ["TARGET", strategySkill.long_setup.take_profit],
+    ["BIAS", "EMA trend and valid higher-high/higher-low or lower-low/lower-high structure must agree."],
+    ["ZONE", "Mark the last base candle before displacement; wait for price to revisit the matching supply/demand zone."],
+    ["ENTRY", "Zone retest plus the EMA pullback candle confirmation."],
+    ["RISK", "Stop beyond zone; target the recent swing only when reward is at least 2.5R."],
   ];
+  if (!structure) throw new Error("Combined structure rules are missing from the skill file.");
   $("#skill-rules").innerHTML = rules.map(([label, text]) => `<p><b>${label}</b> ${escapeHtml(text)}</p>`).join("");
-  const sources = strategySkill.references.map((source) => `<a href="${escapeHtml(source.url)}" target="_blank" rel="noreferrer">${escapeHtml(source.title)}</a>`).join(" · ");
-  $("#skill-description").textContent = `${strategySkill.description} ${strategySkill.performance_note}`;
-  $("#skill-description").insertAdjacentHTML("beforeend", ` Sources: ${sources}`);
+  $("#skill-description").textContent = strategySkill.combination.conflict;
+  $("#skill-sources").innerHTML = strategySkill.references.map((source) => `<a href="${escapeHtml(source.url)}" target="_blank" rel="noreferrer">${escapeHtml(source.title)}</a>`).join(" · ");
 }
 
 function escapeHtml(text) {
@@ -31,15 +31,12 @@ function setStatus(message) {
 }
 
 function previewImage(file) {
-  if (previewUrl) URL.revokeObjectURL(previewUrl);
-  previewUrl = URL.createObjectURL(file);
   $("#selected-image").hidden = false;
   $("#image-name").textContent = file.name || "Chart image";
   $("#image-size").textContent = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
-  const preview = $("#image-preview");
-  preview.hidden = false;
-  preview.src = previewUrl;
-  preview.onerror = () => { preview.hidden = true; };
+  const canvas = $("#image-preview");
+  canvas.width = 0;
+  canvas.height = 0;
 }
 
 function candleColorDirection(red, green, blue) {
@@ -79,6 +76,7 @@ function findColoredCandles(imageData, width, height) {
     if (span <= Math.max(18, width * 0.018) && pixelHeight >= 4 && total >= span * 2) {
       const bullish = cluster.bullish > cluster.bearish;
       candles.push({
+        x: (cluster.first + cluster.last) / 2,
         high: height - cluster.minY,
         low: height - cluster.maxY,
         open: bullish ? height - cluster.maxY : height - cluster.minY,
@@ -123,69 +121,209 @@ function averageTrueRange(candles, period = 14) {
   return ranges.reduce((sum, range) => sum + range, 0) / Math.max(ranges.length, 1);
 }
 
-function analyzeCandles(candles, skill) {
+function findSwingPoints(candles, radius = 2) {
+  const highs = [];
+  const lows = [];
+  for (let index = radius; index < candles.length - radius; index += 1) {
+    const neighborhood = candles.slice(index - radius, index + radius + 1);
+    const candle = candles[index];
+    if (neighborhood.every((item, offset) => offset === radius || candle.high > item.high)) highs.push({ index, price: candle.high });
+    if (neighborhood.every((item, offset) => offset === radius || candle.low < item.low)) lows.push({ index, price: candle.low });
+  }
+  return { highs, lows };
+}
+
+function determineStructure(candles, swings) {
+  const highPairs = swings.highs.slice(-2);
+  const lowPairs = swings.lows.slice(-2);
+  if (highPairs.length < 2 || lowPairs.length < 2) return { direction: "neutral", validLow: null, validHigh: null, swings };
+  const rising = highPairs[1].price > highPairs[0].price && lowPairs[1].price > lowPairs[0].price;
+  const falling = highPairs[1].price < highPairs[0].price && lowPairs[1].price < lowPairs[0].price;
+  let direction = rising ? "long" : falling ? "short" : "neutral";
+  const validLows = swings.lows.filter((low) => {
+    const priorHigh = swings.highs.filter((high) => high.index < low.index).at(-1);
+    return priorHigh && candles.slice(low.index + 1).some((candle) => candle.high > priorHigh.price);
+  });
+  const validHighs = swings.highs.filter((high) => {
+    const priorLow = swings.lows.filter((low) => low.index < high.index).at(-1);
+    return priorLow && candles.slice(high.index + 1).some((candle) => candle.low < priorLow.price);
+  });
+  const validLow = validLows.at(-1) || null;
+  const validHigh = validHighs.at(-1) || null;
+  const latest = candles.at(-1);
+  if (direction === "long" && validLow && latest.close < validLow.price) direction = "short";
+  else if (direction === "short" && validHigh && latest.close > validHigh.price) direction = "long";
+  if (direction === "neutral") {
+    if (latest.close > highPairs[1].price) direction = "long";
+    else if (latest.close < lowPairs[1].price) direction = "short";
+  }
+  return { direction, validLow, validHigh, swings };
+}
+
+function findSupplyDemandZones(candles, atr) {
+  const zones = { demand: [], supply: [] };
+  for (let index = 2; index < candles.length - 1; index += 1) {
+    const base = candles[index];
+    const consolidation = candles.slice(index - 2, index + 1);
+    const baseIsQuiet = consolidation.every((candle) => Math.abs(candle.close - candle.open) <= atr * 0.8);
+    const impulse = candles[index + 1];
+    const displacement = Math.abs(impulse.close - impulse.open) >= atr * 1.5;
+    if (!baseIsQuiet || !displacement) continue;
+    if (impulse.bullish && impulse.close > base.high) {
+      zones.demand.push({ index, x: base.x, low: base.low, high: base.high });
+    }
+    if (!impulse.bullish && impulse.close < base.low) {
+      zones.supply.push({ index, x: base.x, low: base.low, high: base.high });
+    }
+  }
+  return zones;
+}
+
+function makeConditionalPlan(direction, zone, candles, atr, swings, canvasWidth) {
+  const bullish = direction === "long";
+  const recentBars = candles.slice(-12);
+  const fallback = bullish
+    ? { index: candles.length - recentBars.length + recentBars.reduce((best, candle, offset, list) => candle.low < list[best].low ? offset : best, 0), low: Math.min(...recentBars.map((candle) => candle.low)), high: recentBars.reduce((best, candle) => candle.low < best.low ? candle : best).high }
+    : { index: candles.length - recentBars.length + recentBars.reduce((best, candle, offset, list) => candle.high > list[best].high ? offset : best, 0), high: Math.max(...recentBars.map((candle) => candle.high)), low: recentBars.reduce((best, candle) => candle.high > best.high ? candle : best).low };
+  const referenceZone = zone || { ...fallback, x: candles[fallback.index]?.x || candles.at(-1).x, fallback: true };
+  const entry = bullish ? referenceZone.high : referenceZone.low;
+  const stop = bullish ? referenceZone.low - atr * 0.12 : referenceZone.high + atr * 0.12;
+  const risk = Math.abs(entry - stop);
+  const candidates = bullish
+    ? swings.highs.filter((point) => point.index > referenceZone.index && point.price > entry)
+    : swings.lows.filter((point) => point.index > referenceZone.index && point.price < entry);
+  const swingTarget = candidates.at(-1)?.price;
+  const projectedTarget = bullish ? entry + risk * 2.5 : entry - risk * 2.5;
+  const target = swingTarget ?? projectedTarget;
+  return {
+    direction,
+    zone: referenceZone,
+    entry,
+    stop,
+    target,
+    targetIsProjected: swingTarget === undefined,
+    xStart: Math.max(0, Math.min(canvasWidth, referenceZone.x)),
+    conditional: true,
+  };
+}
+
+function analyzeCandles(candles, skill, canvasWidth) {
   if (candles.length < skill.image_reader.minimum_candles) {
+    const atr = Math.max(averageTrueRange(candles, 14), 1);
+    const swings = findSwingPoints(candles);
+    const overlays = candles.length
+      ? [makeConditionalPlan("long", null, candles, atr, swings, canvasWidth), makeConditionalPlan("short", null, candles, atr, swings, canvasWidth)]
+      : [];
     return {
       direction: "WAIT",
-      confidence: "LOW · LOCAL IMAGE READ",
-      visualSummary: `Detected ${candles.length} candle groups. At least ${skill.image_reader.minimum_candles} are needed to attempt the local EMA20/50 interpretation. The uploaded image was still scanned, but there is too little candle history to apply the strategy.`,
+      confidence: "LOW · LOCAL PIXEL READ",
+      visualSummary: `Detected ${candles.length} candle groups; ${skill.image_reader.minimum_candles} are needed for structure and zone checks. The uploaded image was still scanned.`,
       currentPrice: null,
-      entry: "Not readable from image",
-      stopLoss: "Not readable from image",
-      takeProfit: "Not readable from image",
-      caveats: ["No OCR is used; exact quoted prices are not extracted."],
+      entry: overlays.length ? "Conditional long and short swing scenarios" : "No candle locations detected",
+      stopLoss: overlays.length ? "Conditional stops beyond recent swings" : "No candle locations detected",
+      takeProfit: overlays.length ? "Conditional 2.5R projections" : "No candle locations detected",
+      caveats: ["Dashed lines are illustrative scenarios, not trade signals. No OCR is used; exact quoted prices are not extracted."],
+      overlays,
     };
   }
+  const count = candles.length;
+  const maximumStopAtr = skill.combination.maximum_stop_atr;
+  const minimumRewardRisk = skill.combination.minimum_reward_risk;
+  const atr = averageTrueRange(candles, 14);
+  const swings = findSwingPoints(candles);
+  const structure = determineStructure(candles, swings);
+  const zones = findSupplyDemandZones(candles, atr);
   const closes = candles.map((candle) => candle.close);
   const fast = emaSeries(closes, skill.trend_filter.fast_ema_period);
   const slow = emaSeries(closes, skill.trend_filter.slow_ema_period);
-  const atr = averageTrueRange(candles, 14);
+  const emaDirection = fast.at(-1) > slow.at(-1) ? "long" : fast.at(-1) < slow.at(-1) ? "short" : "neutral";
   const latest = candles.at(-1);
-  const previous = candles.at(-2);
-  const recentPullbacks = candles.slice(-7, -1).map((candle, offset) => ({ candle, index: candles.length - 7 + offset }));
-  const longPullback = recentPullbacks.some(({ candle, index }) => Math.abs(candle.low - fast[index]) <= atr * 0.75);
-  const shortPullback = recentPullbacks.some(({ candle, index }) => Math.abs(candle.high - fast[index]) <= atr * 0.75);
-  const longTrend = fast.at(-1) > slow.at(-1);
-  const shortTrend = fast.at(-1) < slow.at(-1);
+  const previous = candles.at(-2) || latest;
+  const recent = candles.slice(-7, -1);
+  const longPullback = recent.some((candle, offset) => Math.abs(candle.low - fast[count - 7 + offset]) <= atr * 0.75);
+  const shortPullback = recent.some((candle, offset) => Math.abs(candle.high - fast[count - 7 + offset]) <= atr * 0.75);
   const longConfirmation = latest.bullish && latest.close > previous.high;
   const shortConfirmation = !latest.bullish && latest.close < previous.low;
-  const longSwing = Math.min(...candles.slice(-7, -1).map((candle) => candle.low));
-  const shortSwing = Math.max(...candles.slice(-7, -1).map((candle) => candle.high));
-  const longEntry = latest.high;
-  const shortEntry = latest.low;
-  const longRisk = longEntry - longSwing;
-  const shortRisk = shortSwing - shortEntry;
-  const longStopOkay = longRisk > 0 && longRisk <= atr * 1.5;
-  const shortStopOkay = shortRisk > 0 && shortRisk <= atr * 1.5;
-  let direction = "WAIT";
-  let entry = "No valid entry";
-  let stopLoss = "No valid stop";
-  let takeProfit = "No valid target";
-  if (longTrend && longPullback && longConfirmation && longStopOkay) {
-    direction = "LONG CANDIDATE";
-    entry = "Break above confirmation candle high";
-    stopLoss = "Below recent pullback swing";
-    takeProfit = "2R above entry";
-  } else if (shortTrend && shortPullback && shortConfirmation && shortStopOkay) {
-    direction = "SHORT CANDIDATE";
-    entry = "Break below confirmation candle low";
-    stopLoss = "Above recent pullback swing";
-    takeProfit = "2R below entry";
+  const demandZone = zones.demand.filter((zone) => zone.index < count - 2).at(-1) || null;
+  const supplyZone = zones.supply.filter((zone) => zone.index < count - 2).at(-1) || null;
+  const demandTouched = demandZone && latest.low <= demandZone.high && latest.high >= demandZone.low;
+  const supplyTouched = supplyZone && latest.high >= supplyZone.low && latest.low <= supplyZone.high;
+  const longStructure = structure.direction === "long";
+  const shortStructure = structure.direction === "short";
+  const longStop = demandZone ? demandZone.low - atr * 0.12 : null;
+  const shortStop = supplyZone ? supplyZone.high + atr * 0.12 : null;
+  const longEntry = demandZone?.high;
+  const shortEntry = supplyZone?.low;
+  const longRisk = longEntry === undefined ? Infinity : longEntry - longStop;
+  const shortRisk = shortEntry === undefined ? Infinity : shortStop - shortEntry;
+  const targetHigh = swings.highs.filter((point) => demandZone && point.index > demandZone.index && point.price > longEntry).at(-1)?.price;
+  const targetLow = swings.lows.filter((point) => supplyZone && point.index > supplyZone.index && point.price < shortEntry).at(-1)?.price;
+  const longRewardRisk = targetHigh === undefined ? 0 : (targetHigh - longEntry) / Math.max(longRisk, 0.001);
+  const shortRewardRisk = targetLow === undefined ? 0 : (shortEntry - targetLow) / Math.max(shortRisk, 0.001);
+  const longEmaComponent = emaDirection === "long" && longPullback && longConfirmation;
+  const shortEmaComponent = emaDirection === "short" && shortPullback && shortConfirmation;
+  const longActive = longEmaComponent && longStructure && demandTouched && longRisk > 0 && longRisk <= atr * maximumStopAtr && longRewardRisk >= minimumRewardRisk;
+  const shortActive = shortEmaComponent && shortStructure && supplyTouched && shortRisk > 0 && shortRisk <= atr * maximumStopAtr && shortRewardRisk >= minimumRewardRisk;
+  const scenarioDirection = structure.direction !== "neutral" ? structure.direction : emaDirection;
+  const scenarios = [];
+  if (scenarioDirection === "long" || scenarioDirection === "short") {
+    const zone = scenarioDirection === "long" ? demandZone : supplyZone;
+    scenarios.push(makeConditionalPlan(scenarioDirection, zone, candles, atr, swings, canvasWidth));
+  } else {
+    scenarios.push(makeConditionalPlan("long", demandZone, candles, atr, swings, canvasWidth));
+    scenarios.push(makeConditionalPlan("short", supplyZone, candles, atr, swings, canvasWidth));
   }
-  const visualTrend = longTrend ? "EMA20 is above EMA50 in the detected candle sequence." : shortTrend ? "EMA20 is below EMA50 in the detected candle sequence." : "The EMA20/EMA50 relationship is mixed.";
-  const checks = direction === "WAIT"
-    ? `Trend filter: ${longTrend || shortTrend ? "pass" : "fail"}; pullback: ${longPullback || shortPullback ? "detected" : "not detected"}; candle confirmation: ${longConfirmation || shortConfirmation ? "detected" : "not detected"}; stop/target filter: not fully met.`
-    : "Trend, pullback, confirmation candle, 1.5 ATR stop limit, and 2R visible-range checks passed.";
+  const activeDirection = longActive ? "LONG CANDIDATE" : shortActive ? "SHORT CANDIDATE" : "WAIT";
+  const activePlan = longActive ? scenarios.find((plan) => plan.direction === "long") : shortActive ? scenarios.find((plan) => plan.direction === "short") : null;
+  if (activePlan) activePlan.conditional = false;
+  const primaryPlan = activePlan || scenarios[0];
+  const checks = `EMA bias: ${emaDirection}; structure: ${structure.direction}; demand retest: ${demandTouched ? "yes" : "no"}; supply retest: ${supplyTouched ? "yes" : "no"}; EMA pullback confirmation: ${longEmaComponent || shortEmaComponent ? "yes" : "no"}; ${minimumRewardRisk}R target: ${longRewardRisk >= minimumRewardRisk || shortRewardRisk >= minimumRewardRisk ? "yes" : "no"}.`;
   return {
-    direction,
-    confidence: "LOW · LOCAL IMAGE READ",
-    visualSummary: `${visualTrend} Detected ${candles.length} colored candle groups. ${checks}`,
+    direction: activeDirection,
+    confidence: "LOW · LOCAL PIXEL READ",
+    visualSummary: `${count} candle groups scanned. ${checks}`,
     currentPrice: null,
-    entry,
-    stopLoss,
-    takeProfit,
-    caveats: ["This rule-based image scan estimates candle colors and positions. It does not OCR prices or reliably distinguish every MT5 theme."],
+    entry: primaryPlan ? `${primaryPlan.conditional ? "Conditional " : "Active setup · "}${primaryPlan.zone.fallback ? "swing-area" : "zone"} retest` : "No swing location detected",
+    stopLoss: primaryPlan ? `Beyond ${primaryPlan.zone.fallback ? "swing area" : primaryPlan.direction === "long" ? "demand" : "supply"} zone` : "No swing location detected",
+    takeProfit: primaryPlan ? `${primaryPlan.targetIsProjected ? "Projected " : "Recent swing · "}2.5R` : "No swing target detected",
+    caveats: ["Dashed chart lines are conditional scenarios while WAIT is shown. No OCR is used; exact dollar prices are not extracted."],
+    overlays: scenarios,
   };
+}
+
+function drawPlanOverlays(context, width, height, result) {
+  if (!result.overlays?.length) return;
+  context.save();
+  context.font = "bold 11px monospace";
+  context.lineWidth = Math.max(2, width / 900);
+  for (const plan of result.overlays) {
+    const color = plan.direction === "long" ? "#9ee66b" : "#ff8874";
+    const zoneTop = Math.max(0, Math.min(height, height - plan.zone.high));
+    const zoneBottom = Math.max(0, Math.min(height, height - plan.zone.low));
+    context.globalAlpha = 0.18;
+    context.fillStyle = color;
+    context.fillRect(plan.xStart, zoneTop, Math.max(1, width - plan.xStart), Math.max(2, zoneBottom - zoneTop));
+    context.globalAlpha = 1;
+    context.strokeStyle = color;
+    const conditional = result.direction === "WAIT" || plan.conditional;
+    context.setLineDash(conditional ? [8, 6] : []);
+    for (const [label, value] of [["ENTRY", plan.entry], ["SL", plan.stop], ["TP", plan.target]]) {
+      const y = Math.max(10, Math.min(height - 10, height - value));
+      context.beginPath();
+      context.moveTo(plan.xStart, y);
+      context.lineTo(width, y);
+      context.stroke();
+      const text = `${plan.direction.toUpperCase()} ${label}${conditional ? " · CONDITIONAL" : ""}`;
+      const textWidth = context.measureText(text).width;
+      const textX = Math.max(4, width - textWidth - 10);
+      context.fillStyle = "#101513e8";
+      context.fillRect(textX - 4, y - 10, textWidth + 8, 20);
+      context.fillStyle = color;
+      context.fillText(text, textX, y + 4);
+    }
+  }
+  context.setLineDash([]);
+  context.restore();
 }
 
 function showResult(result) {
@@ -213,7 +351,7 @@ function decodeImage(file) {
 
 function drawImageToCanvas(image) {
   const scale = Math.min(1, 1800 / image.width, 1400 / image.height);
-  const canvas = document.createElement("canvas");
+  const canvas = $("#image-preview");
   canvas.width = Math.max(1, Math.round(image.width * scale));
   canvas.height = Math.max(1, Math.round(image.height * scale));
   const context = canvas.getContext("2d", { willReadFrequently: true });
@@ -222,15 +360,7 @@ function drawImageToCanvas(image) {
 }
 
 function displayImage(file) {
-  if (previewUrl) URL.revokeObjectURL(previewUrl);
-  previewUrl = URL.createObjectURL(file);
-  $("#selected-image").hidden = false;
-  $("#image-name").textContent = file.name || "Chart image";
-  $("#image-size").textContent = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
-  const preview = $("#image-preview");
-  preview.hidden = false;
-  preview.src = previewUrl;
-  preview.onerror = () => { preview.hidden = true; };
+  previewImage(file);
 }
 
 async function analyzeImage(file) {
@@ -246,7 +376,9 @@ async function analyzeImage(file) {
     const { canvas, context } = drawImageToCanvas(image);
     const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
     const candles = findColoredCandles(imageData, canvas.width, canvas.height);
-    showResult(analyzeCandles(candles, strategySkill));
+    const result = analyzeCandles(candles, strategySkill, canvas.width);
+    drawPlanOverlays(context, canvas.width, canvas.height, result);
+    showResult(result);
     $("#analysis-status").textContent = "Local strategy interpretation complete. No image or API request was sent.";
   } catch (error) {
     $("#analysis-status").textContent = error.message || "Could not analyze this image locally.";
