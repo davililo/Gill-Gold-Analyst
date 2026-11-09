@@ -446,6 +446,17 @@ function renderSession() {
   }
   $("#session-bias").textContent = stateText;
   $("#session-summary").textContent = `${summary} Selected ${selectedId}; peer context weight ${contextLongWeight} long / ${contextShortWeight} short. Suggested: ${suggested}.`;
+  $("#selected-plan-title").textContent = `${selectedId} plan`;
+  $("#selected-plan-state").textContent = selectedResult ? (stateText.startsWith("WAIT") ? "CONDITIONAL · WAIT" : "IN CONTEXT") : `WAIT · ADD ${selectedId} IMAGE`;
+  $("#selected-plan-direction").textContent = selectedResult?.direction || "WAIT";
+  $("#selected-plan-entry").textContent = selectedResult?.entry || `Upload ${selectedId} screenshot`;
+  $("#selected-plan-stop").textContent = selectedResult?.stopLoss || "—";
+  $("#selected-plan-target").textContent = selectedResult?.takeProfit || "—";
+  $("#selected-plan-note").textContent = !selectedResult
+    ? `No ${selectedId} screenshot yet. Other timeframe images remain in this session.`
+    : stateText.startsWith("WAIT")
+      ? `Conditional ${selectedId} scenario shown on its image. WAIT means the combined strategy is not confirmed.`
+      : `${selectedId} is aligned with the session context. Overlay levels are still pixel-relative, not broker prices.`;
   $("#session-trades").innerHTML = loaded.map(({ frame, slot }) => `<div class="session-row ${frame.id === selectedId ? "selected" : ""}"><strong>${frame.id}</strong><span>${slot.result.direction}</span><small>${slot.result.candlesDetected} candles · EMA ${slot.result.emaDirection} · structure ${slot.result.structureDirection}</small></div>`).join("") || "";
   for (const { frame, slot } of loaded) {
     const canvas = $(`#canvas-${frame.id}`);
